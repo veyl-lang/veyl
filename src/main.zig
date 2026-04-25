@@ -17,6 +17,9 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "check")) {
         const path = args.next() orelse return usage(io);
         try checkFile(io, allocator, path);
+    } else if (std.mem.eql(u8, command, "run")) {
+        const path = args.next() orelse return usage(io);
+        try runFile(io, allocator, path);
     } else if (std.mem.eql(u8, command, "fmt")) {
         const path = args.next() orelse return usage(io);
         try fmtFile(io, allocator, path);
@@ -81,6 +84,42 @@ fn checkFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
         try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
         std.process.exit(1);
     }
+}
+
+fn runFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
+    var compilation = try parseFile(io, allocator, path);
+    defer compilation.deinit();
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    var hir = try veyl.hir.lowerAst(allocator, &compilation.tree.?);
+    defer hir.deinit();
+
+    var resolved = try veyl.resolve.resolveModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
+    defer resolved.deinit();
+
+    if (!compilation.diagnostics.hasErrors()) {
+        try veyl.typeck.checkModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
+    }
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    var bytecode = try veyl.bytecode.compileHir(allocator, &hir);
+    defer bytecode.deinit();
+
+    var vm = veyl.runtime.Vm.init(allocator);
+    defer vm.deinit();
+
+    _ = vm.runFirst(&bytecode) catch |err| {
+        std.debug.print("runtime error: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
 }
 
 fn dumpTokens(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
@@ -254,6 +293,7 @@ fn usage(io: std.Io) !void {
     try writeStdout(io,
         \\Veyl commands:
         \\  veyl check <file>
+        \\  veyl run <file>
         \\  veyl fmt <file>
         \\  veyl dump tokens <file>
         \\  veyl dump ast <file>
