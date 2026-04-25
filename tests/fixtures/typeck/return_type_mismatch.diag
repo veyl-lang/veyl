@@ -1,0 +1,5 @@
+error: function body type does not match return type
+  --> return_type_mismatch.veyl:1:20
+   |
+  1 | fn answer() -> Int {
+   |                    ^^^^^^^^^^^^

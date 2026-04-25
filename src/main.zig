@@ -74,7 +74,7 @@ fn checkFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     defer resolved.deinit();
 
     if (!compilation.diagnostics.hasErrors()) {
-        try veyl.typeck.checkModule(allocator, &hir, &compilation.diagnostics);
+        try veyl.typeck.checkModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
     }
 
     if (compilation.diagnostics.hasErrors()) {
