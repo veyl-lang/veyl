@@ -352,7 +352,35 @@ fn writePattern(
             }
             try writer.writeAll(" }");
         },
-        else => try writer.writeAll("<pattern>"),
+        .array => |array| {
+            try writer.writeByte('[');
+            const start: usize = @intCast(array.items.start);
+            const end: usize = @intCast(array.items.end());
+            for (ast.pattern_args.items[start..end], 0..) |item, index| {
+                if (index != 0) try writer.writeAll(", ");
+                try writePattern(writer, ast, interner, source, item);
+            }
+            try writer.writeByte(']');
+        },
+        .rest => |rest| {
+            try writer.writeAll("..");
+            if (rest.name) |name| {
+                try writer.writeAll(interner.get(name) orelse "<missing>");
+            }
+        },
+        .range => |range| {
+            try writePattern(writer, ast, interner, source, range.start);
+            try writer.writeAll(if (range.inclusive) "..=" else "..");
+            try writePattern(writer, ast, interner, source, range.end);
+        },
+        .or_pattern => |or_pattern| {
+            const start: usize = @intCast(or_pattern.patterns.start);
+            const end: usize = @intCast(or_pattern.patterns.end());
+            for (ast.pattern_args.items[start..end], 0..) |item, index| {
+                if (index != 0) try writer.writeAll(" | ");
+                try writePattern(writer, ast, interner, source, item);
+            }
+        },
     }
 }
 
@@ -449,6 +477,29 @@ fn writeExpr(
                 try writeBlockBody(writer, ast, interner, source, ast.blocks.items[else_block], indent);
             }
         },
+        .match_expr => |match_expr| {
+            try writer.writeAll("match ");
+            try writeExpr(writer, ast, interner, source, match_expr.value, indent);
+            try writer.writeAll(" {\n");
+            const start: usize = @intCast(match_expr.arms.start);
+            const end: usize = @intCast(match_expr.arms.end());
+            for (ast.match_arms.items[start..end]) |arm| {
+                try writeIndent(writer, indent + 1);
+                try writePattern(writer, ast, interner, source, arm.pattern);
+                if (arm.guard) |guard| {
+                    try writer.writeAll(" if ");
+                    try writeExpr(writer, ast, interner, source, guard, indent + 1);
+                }
+                try writer.writeAll(" => ");
+                switch (arm.body) {
+                    .expr => |body_expr| try writeExpr(writer, ast, interner, source, body_expr, indent + 1),
+                    .block => |block| try writeBlockBody(writer, ast, interner, source, ast.blocks.items[block], indent + 1),
+                }
+                try writer.writeAll(",\n");
+            }
+            try writeIndent(writer, indent);
+            try writer.writeByte('}');
+        },
         .try_expr => |try_expr| {
             try writer.writeAll("try ");
             try writeExpr(writer, ast, interner, source, try_expr.value, indent);
@@ -467,7 +518,6 @@ fn writeExpr(
                 .block => |block| try writeBlockBody(writer, ast, interner, source, ast.blocks.items[block], indent),
             }
         },
-        else => try writer.writeAll("<expr>"),
     }
 }
 

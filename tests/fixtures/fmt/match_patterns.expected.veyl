@@ -1,0 +1,12 @@
+fn classify(parts: Array<Str>, code: Int) -> Str {
+    let text = match parts {
+        ["users", id] => id,
+        ["assets", ..rest] => rest.join("/"),
+        _ => "not found",
+    };
+    match code {
+        200..=299 => "ok",
+        400 | 404 => "bad",
+        _ => text,
+    }
+}
