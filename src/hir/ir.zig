@@ -86,12 +86,16 @@ pub const FunctionDecl = struct {
     visibility: parser.Visibility,
     name: base.SymbolId,
     params: base.Range,
+    return_type: ?TypeId,
     body: BlockId,
     span: base.Span,
 };
 
 pub const FunctionParam = struct {
+    is_mut: bool,
     name: base.SymbolId,
+    type_expr: TypeId,
+    default_value: ?ExprId,
     span: base.Span,
 };
 
@@ -412,6 +416,7 @@ fn lowerFunctionDecl(hir: *Hir, ast: *const parser.Ast, fn_decl: parser.FnDecl) 
         .visibility = fn_decl.visibility,
         .name = fn_decl.name,
         .params = try lowerFunctionParams(hir, ast, fn_decl.params),
+        .return_type = if (fn_decl.return_type) |return_type| try lowerType(hir, ast, return_type) else null,
         .body = try lowerBlock(hir, ast, fn_decl.body),
         .span = fn_decl.span,
     };
@@ -422,7 +427,13 @@ fn lowerFunctionParams(hir: *Hir, ast: *const parser.Ast, params: base.Range) Al
     const start: usize = @intCast(params.start);
     const end: usize = @intCast(params.end());
     for (ast.fn_params.items[start..end]) |param| {
-        try hir.fn_params.append(hir.allocator, .{ .name = param.name, .span = param.span });
+        try hir.fn_params.append(hir.allocator, .{
+            .is_mut = param.is_mut,
+            .name = param.name,
+            .type_expr = try lowerType(hir, ast, param.type_expr),
+            .default_value = if (param.default_value) |default_value| try lowerExpr(hir, ast, default_value) else null,
+            .span = param.span,
+        });
     }
     return .{ .start = params_start, .len = @intCast(hir.fn_params.items.len - params_start) };
 }
