@@ -88,6 +88,7 @@ pub const BytecodeModule = struct {
     entry_function: u32 = 0,
     instructions: std.ArrayListUnmanaged(Instruction) = .empty,
     int_constants: std.ArrayListUnmanaged(i64) = .empty,
+    float_constants: std.ArrayListUnmanaged(f64) = .empty,
     string_constants: std.ArrayListUnmanaged(StringConstant) = .empty,
 
     pub fn init(allocator: Allocator) BytecodeModule {
@@ -99,6 +100,7 @@ pub const BytecodeModule = struct {
         self.function_names.deinit(self.allocator);
         self.instructions.deinit(self.allocator);
         self.int_constants.deinit(self.allocator);
+        self.float_constants.deinit(self.allocator);
         self.string_constants.deinit(self.allocator);
         self.* = undefined;
     }
@@ -271,7 +273,7 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
     const module = context.module;
     switch (module.exprs.items[expr_id]) {
         .int_literal => |span| try emitIntConstant(bytecode, context.source, span),
-        .float_literal => try emit(bytecode, .constant_float, 0),
+        .float_literal => |span| try emitFloatConstant(bytecode, context.source, span),
         .string_literal => |span| try emitStringConstant(bytecode, context.source, span),
         .char_literal => try emit(bytecode, .constant_char, 0),
         .bool_literal => |bool_literal| try emit(bytecode, .constant_bool, if (bool_literal.value) 1 else 0),
@@ -419,6 +421,15 @@ fn emitIntConstant(bytecode: *BytecodeModule, source: []const u8, span: base.Spa
     try emit(bytecode, .constant_int, index);
 }
 
+fn emitFloatConstant(bytecode: *BytecodeModule, source: []const u8, span: base.Span) CompileError!void {
+    const start: usize = @intCast(span.start);
+    const end: usize = @intCast(span.end());
+    const value = std.fmt.parseFloat(f64, source[start..end]) catch return error.InvalidIntegerLiteral;
+    const index: u32 = @intCast(bytecode.float_constants.items.len);
+    try bytecode.float_constants.append(bytecode.allocator, value);
+    try emit(bytecode, .constant_float, index);
+}
+
 fn emitStringConstant(bytecode: *BytecodeModule, source: []const u8, span: base.Span) CompileError!void {
     const start: usize = @intCast(span.start + 1);
     const end: usize = @intCast(span.end() - 1);
@@ -447,6 +458,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
                 .call, .call_function, .builtin_assert, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
+                .constant_float => try output.writer.print(" {d}", .{bytecode.float_constants.items[instruction.operand]}),
                 .constant_string => try output.writer.print(" \"{s}\"", .{bytecode.string_constants.items[instruction.operand].bytes}),
                 .constant_bool => try output.writer.print(" {}", .{instruction.operand != 0}),
                 else => {},
