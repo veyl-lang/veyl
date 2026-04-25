@@ -1,0 +1,5 @@
+error: if branch types must match
+  --> if_branch_type_mismatch.veyl:2:17
+   |
+  2 |     let value = if true {
+   |                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

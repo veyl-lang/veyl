@@ -153,12 +153,7 @@ fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *co
         .bool_literal => .bool,
         .unit_literal => .unit,
         .binary => |binary| try inferBinaryExpr(allocator, module, interner, functions, env, binary, expected_return, diagnostics),
-        .if_expr => |if_expr| {
-            try checkCondition(allocator, module, interner, functions, env, if_expr.condition, expected_return, diagnostics);
-            _ = try checkBlock(allocator, module, interner, functions, env, if_expr.then_block, expected_return, diagnostics);
-            if (if_expr.else_block) |else_block| _ = try checkBlock(allocator, module, interner, functions, env, else_block, expected_return, diagnostics);
-            return .unknown;
-        },
+        .if_expr => |if_expr| try inferIfExpr(allocator, module, interner, functions, env, if_expr, expected_return, diagnostics),
         .block_expr => |block_expr| {
             return try checkBlock(allocator, module, interner, functions, env, block_expr.block, expected_return, diagnostics);
         },
@@ -171,6 +166,35 @@ fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *co
         .call => |call| try inferCallExpr(allocator, module, interner, functions, env, call, expected_return, diagnostics),
         .array_literal, .struct_literal, .index, .field, .unsupported => .unknown,
     };
+}
+
+fn inferIfExpr(
+    allocator: std.mem.Allocator,
+    module: *const hir.Hir,
+    interner: *const base.Interner,
+    functions: *const FunctionEnv,
+    env: *TypeEnv,
+    if_expr: anytype,
+    expected_return: Type,
+    diagnostics: *diag.DiagnosticBag,
+) CheckError!Type {
+    try checkCondition(allocator, module, interner, functions, env, if_expr.condition, expected_return, diagnostics);
+    const then_type = try checkBlock(allocator, module, interner, functions, env, if_expr.then_block, expected_return, diagnostics);
+    const else_type = if (if_expr.else_block) |else_block|
+        try checkBlock(allocator, module, interner, functions, env, else_block, expected_return, diagnostics)
+    else
+        Type.unit;
+
+    if (then_type == .unknown or else_type == .unknown) return .unknown;
+    if (then_type != else_type) {
+        try diagnostics.add(.{
+            .severity = .err,
+            .span = if_expr.span,
+            .message = "if branch types must match",
+        });
+        return .unknown;
+    }
+    return then_type;
 }
 
 fn inferBinaryExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, binary: anytype, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!Type {
