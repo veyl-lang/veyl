@@ -45,7 +45,7 @@ pub const Vm = struct {
         const start: usize = @intCast(function.code.start);
         const end: usize = @intCast(function.code.end());
         var ip = start;
-        while (ip < end) : (ip += 1) {
+        while (ip < end) {
             const instruction = module.instructions.items[ip];
             switch (instruction.op) {
                 .unit => try self.stack.append(self.allocator, .unit),
@@ -65,10 +65,21 @@ pub const Vm = struct {
                 .less_equal => try self.binaryCompare(.less_equal),
                 .greater => try self.binaryCompare(.greater),
                 .greater_equal => try self.binaryCompare(.greater_equal),
+                .jump => {
+                    ip = @intCast(instruction.operand);
+                    continue;
+                },
+                .jump_if_false => {
+                    if (!try self.popBool()) {
+                        ip = @intCast(instruction.operand);
+                        continue;
+                    }
+                },
                 .pop => _ = try self.pop(),
                 .ret => return try self.pop(),
                 else => return error.UnsupportedInstruction,
             }
+            ip += 1;
         }
         return error.UnsupportedInstruction;
     }
@@ -138,6 +149,13 @@ pub const Vm = struct {
     fn popInt(self: *Vm) VmError!i64 {
         return switch (try self.pop()) {
             .int => |value| value,
+            else => error.TypeMismatch,
+        };
+    }
+
+    fn popBool(self: *Vm) VmError!bool {
+        return switch (try self.pop()) {
+            .bool => |value| value,
             else => error.TypeMismatch,
         };
     }

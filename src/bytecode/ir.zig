@@ -32,6 +32,8 @@ pub const Op = enum {
     logical_and,
     logical_or,
     assign,
+    jump,
+    jump_if_false,
     pop,
     ret,
     unsupported,
@@ -251,7 +253,48 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
             }
             try emit(bytecode, .call, call.args.len);
         },
+        .if_expr => |if_expr| try compileIfExpr(context, if_expr),
         else => try emit(bytecode, .unsupported, 0),
+    }
+}
+
+fn compileIfExpr(context: *CompileContext, if_expr: anytype) CompileError!void {
+    const bytecode = context.bytecode;
+    try compileControlCondition(context, if_expr.condition);
+    const jump_to_else = bytecode.instructions.items.len;
+    try emit(bytecode, .jump_if_false, 0);
+    try compileBlockValue(context, if_expr.then_block);
+    const jump_to_end = bytecode.instructions.items.len;
+    try emit(bytecode, .jump, 0);
+    bytecode.instructions.items[jump_to_else].operand = @intCast(bytecode.instructions.items.len);
+    if (if_expr.else_block) |else_block| {
+        try compileBlockValue(context, else_block);
+    } else {
+        try emit(bytecode, .unit, 0);
+    }
+    bytecode.instructions.items[jump_to_end].operand = @intCast(bytecode.instructions.items.len);
+}
+
+fn compileBlockValue(context: *CompileContext, block_id: hir.ir.BlockId) CompileError!void {
+    const bytecode = context.bytecode;
+    const module = context.module;
+    const block = module.blocks.items[block_id];
+    const start: usize = @intCast(block.stmts.start);
+    const end: usize = @intCast(block.stmts.end());
+    for (module.block_stmt_ids.items[start..end]) |stmt_id| {
+        if (try compileStmt(context, module.stmts.items[stmt_id])) return;
+    }
+    if (block.final_expr) |final_expr| {
+        try compileExpr(context, final_expr);
+    } else {
+        try emit(bytecode, .unit, 0);
+    }
+}
+
+fn compileControlCondition(context: *CompileContext, condition: hir.ir.ControlCondition) CompileError!void {
+    switch (condition) {
+        .expr => |expr| try compileExpr(context, expr),
+        .let_pattern => try emit(context.bytecode, .unsupported, 0),
     }
 }
 
@@ -301,7 +344,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
             switch (instruction.op) {
                 .get_name, .get_field => try output.writer.print(" {s}", .{interner.get(instruction.operand) orelse "<missing>"}),
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
-                .call, .call_function => try output.writer.print(" {d}", .{instruction.operand}),
+                .call, .call_function, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_bool => try output.writer.print(" {}", .{instruction.operand != 0}),
                 else => {},
