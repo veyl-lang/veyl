@@ -1,5 +1,6 @@
 HirRoot
-  Struct package User
+  Struct package User fields=1
+    Field package name: Str
   Function package example params=0
     Block
       Let values

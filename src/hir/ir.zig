@@ -9,6 +9,7 @@ pub const ExprId = u32;
 pub const StmtId = u32;
 pub const BlockId = u32;
 pub const PatternId = u32;
+pub const TypeId = u32;
 
 pub const PathSegment = struct {
     name: base.SymbolId,
@@ -29,9 +30,55 @@ pub const ImportItem = struct {
     span: base.Span,
 };
 
+pub const TypeExpr = union(enum) {
+    path: struct { segments: base.Range, args: base.Range, span: base.Span },
+    unit: base.Span,
+};
+
 pub const NamedDecl = struct {
     visibility: parser.Visibility,
     name: base.SymbolId,
+    span: base.Span,
+};
+
+pub const TypeAliasDecl = struct {
+    visibility: parser.Visibility,
+    name: base.SymbolId,
+    aliased_type: TypeId,
+    span: base.Span,
+};
+
+pub const StructDecl = struct {
+    visibility: parser.Visibility,
+    name: base.SymbolId,
+    fields: base.Range,
+    span: base.Span,
+};
+
+pub const StructField = struct {
+    visibility: parser.Visibility,
+    name: base.SymbolId,
+    type_expr: TypeId,
+    span: base.Span,
+};
+
+pub const EnumDecl = struct {
+    visibility: parser.Visibility,
+    name: base.SymbolId,
+    variants: base.Range,
+    span: base.Span,
+};
+
+pub const EnumVariant = struct {
+    name: base.SymbolId,
+    kind: parser.ast.EnumVariantKind,
+    fields: base.Range,
+    span: base.Span,
+};
+
+pub const EnumField = struct {
+    name: ?base.SymbolId,
+    type_expr: TypeId,
     span: base.Span,
 };
 
@@ -156,10 +203,10 @@ pub const Block = struct {
 
 pub const Decl = union(enum) {
     import: ImportDecl,
-    type_alias: NamedDecl,
+    type_alias: TypeAliasDecl,
     function: FunctionDecl,
-    struct_decl: NamedDecl,
-    enum_decl: NamedDecl,
+    struct_decl: StructDecl,
+    enum_decl: EnumDecl,
     impl_decl: ImplDecl,
     interface_decl: NamedDecl,
     test_decl: TestDecl,
@@ -171,7 +218,12 @@ pub const Hir = struct {
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
     import_items: std.ArrayListUnmanaged(ImportItem) = .empty,
+    types: std.ArrayListUnmanaged(TypeExpr) = .empty,
+    type_args: std.ArrayListUnmanaged(TypeId) = .empty,
     fn_params: std.ArrayListUnmanaged(FunctionParam) = .empty,
+    struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
+    enum_variants: std.ArrayListUnmanaged(EnumVariant) = .empty,
+    enum_fields: std.ArrayListUnmanaged(EnumField) = .empty,
     impl_methods: std.ArrayListUnmanaged(FunctionDecl) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
@@ -192,7 +244,12 @@ pub const Hir = struct {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
         self.import_items.deinit(self.allocator);
+        self.types.deinit(self.allocator);
+        self.type_args.deinit(self.allocator);
         self.fn_params.deinit(self.allocator);
+        self.struct_fields.deinit(self.allocator);
+        self.enum_variants.deinit(self.allocator);
+        self.enum_fields.deinit(self.allocator);
         self.impl_methods.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
@@ -229,17 +286,20 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
             .type_alias => |type_alias| .{ .type_alias = .{
                 .visibility = type_alias.visibility,
                 .name = type_alias.name,
+                .aliased_type = try lowerType(&hir, ast, type_alias.aliased_type),
                 .span = type_alias.span,
             } },
             .fn_decl => |fn_decl| .{ .function = try lowerFunctionDecl(&hir, ast, fn_decl) },
             .struct_decl => |struct_decl| .{ .struct_decl = .{
                 .visibility = struct_decl.visibility,
                 .name = struct_decl.name,
+                .fields = try lowerStructFields(&hir, ast, struct_decl.fields),
                 .span = struct_decl.span,
             } },
             .enum_decl => |enum_decl| .{ .enum_decl = .{
                 .visibility = enum_decl.visibility,
                 .name = enum_decl.name,
+                .variants = try lowerEnumVariants(&hir, ast, enum_decl.variants),
                 .span = enum_decl.span,
             } },
             .impl_decl => |impl_decl| .{ .impl_decl = .{
@@ -275,6 +335,76 @@ fn lowerImportItems(hir: *Hir, ast: *const parser.Ast, items: base.Range) Alloca
         });
     }
     return .{ .start = items_start, .len = @intCast(hir.import_items.items.len - items_start) };
+}
+
+fn lowerType(hir: *Hir, ast: *const parser.Ast, type_id: parser.TypeId) Allocator.Error!TypeId {
+    const ast_type = ast.types.items[type_id];
+    const lowered: TypeExpr = switch (ast_type) {
+        .path => |path| .{ .path = .{
+            .segments = path.segments,
+            .args = try lowerTypeRange(hir, ast, path.args),
+            .span = path.span,
+        } },
+        .unit => |span| .{ .unit = span },
+    };
+
+    const lowered_id: TypeId = @intCast(hir.types.items.len);
+    try hir.types.append(hir.allocator, lowered);
+    return lowered_id;
+}
+
+fn lowerTypeRange(hir: *Hir, ast: *const parser.Ast, types: base.Range) Allocator.Error!base.Range {
+    const types_start: u32 = @intCast(hir.type_args.items.len);
+    const start: usize = @intCast(types.start);
+    const end: usize = @intCast(types.end());
+    for (ast.type_args.items[start..end]) |type_id| {
+        try hir.type_args.append(hir.allocator, try lowerType(hir, ast, type_id));
+    }
+    return .{ .start = types_start, .len = @intCast(hir.type_args.items.len - types_start) };
+}
+
+fn lowerStructFields(hir: *Hir, ast: *const parser.Ast, fields: base.Range) Allocator.Error!base.Range {
+    const fields_start: u32 = @intCast(hir.struct_fields.items.len);
+    const start: usize = @intCast(fields.start);
+    const end: usize = @intCast(fields.end());
+    for (ast.struct_fields.items[start..end]) |field| {
+        try hir.struct_fields.append(hir.allocator, .{
+            .visibility = field.visibility,
+            .name = field.name,
+            .type_expr = try lowerType(hir, ast, field.type_expr),
+            .span = field.span,
+        });
+    }
+    return .{ .start = fields_start, .len = @intCast(hir.struct_fields.items.len - fields_start) };
+}
+
+fn lowerEnumVariants(hir: *Hir, ast: *const parser.Ast, variants: base.Range) Allocator.Error!base.Range {
+    const variants_start: u32 = @intCast(hir.enum_variants.items.len);
+    const start: usize = @intCast(variants.start);
+    const end: usize = @intCast(variants.end());
+    for (ast.enum_variants.items[start..end]) |variant| {
+        try hir.enum_variants.append(hir.allocator, .{
+            .name = variant.name,
+            .kind = variant.kind,
+            .fields = try lowerEnumFields(hir, ast, variant.fields),
+            .span = variant.span,
+        });
+    }
+    return .{ .start = variants_start, .len = @intCast(hir.enum_variants.items.len - variants_start) };
+}
+
+fn lowerEnumFields(hir: *Hir, ast: *const parser.Ast, fields: base.Range) Allocator.Error!base.Range {
+    const fields_start: u32 = @intCast(hir.enum_fields.items.len);
+    const start: usize = @intCast(fields.start);
+    const end: usize = @intCast(fields.end());
+    for (ast.enum_fields.items[start..end]) |field| {
+        try hir.enum_fields.append(hir.allocator, .{
+            .name = field.name,
+            .type_expr = try lowerType(hir, ast, field.type_expr),
+            .span = field.span,
+        });
+    }
+    return .{ .start = fields_start, .len = @intCast(hir.enum_fields.items.len - fields_start) };
 }
 
 fn lowerFunctionDecl(hir: *Hir, ast: *const parser.Ast, fn_decl: parser.FnDecl) Allocator.Error!FunctionDecl {
@@ -609,7 +739,11 @@ pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Inte
                 }
                 try output.writer.writeByte('\n');
             },
-            .type_alias => |decl_info| try dumpNamed(&output.writer, interner, "TypeAlias", decl_info),
+            .type_alias => |type_alias| {
+                try output.writer.print("  TypeAlias {s} {s} = ", .{ @tagName(type_alias.visibility), interner.get(type_alias.name) orelse "<missing>" });
+                try dumpType(&output.writer, hir, interner, type_alias.aliased_type);
+                try output.writer.writeByte('\n');
+            },
             .function => |function| {
                 try output.writer.print("  Function {s} {s} params={d}\n", .{
                     @tagName(function.visibility),
@@ -618,8 +752,32 @@ pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Inte
                 });
                 try dumpBlock(&output.writer, hir, interner, function.body, 2);
             },
-            .struct_decl => |decl_info| try dumpNamed(&output.writer, interner, "Struct", decl_info),
-            .enum_decl => |decl_info| try dumpNamed(&output.writer, interner, "Enum", decl_info),
+            .struct_decl => |struct_decl| {
+                try output.writer.print("  Struct {s} {s} fields={d}\n", .{ @tagName(struct_decl.visibility), interner.get(struct_decl.name) orelse "<missing>", struct_decl.fields.len });
+                const start: usize = @intCast(struct_decl.fields.start);
+                const end: usize = @intCast(struct_decl.fields.end());
+                for (hir.struct_fields.items[start..end]) |field| {
+                    try output.writer.print("    Field {s} {s}: ", .{ @tagName(field.visibility), interner.get(field.name) orelse "<missing>" });
+                    try dumpType(&output.writer, hir, interner, field.type_expr);
+                    try output.writer.writeByte('\n');
+                }
+            },
+            .enum_decl => |enum_decl| {
+                try output.writer.print("  Enum {s} {s} variants={d}\n", .{ @tagName(enum_decl.visibility), interner.get(enum_decl.name) orelse "<missing>", enum_decl.variants.len });
+                const start: usize = @intCast(enum_decl.variants.start);
+                const end: usize = @intCast(enum_decl.variants.end());
+                for (hir.enum_variants.items[start..end]) |variant| {
+                    try output.writer.print("    Variant {s} {s} fields={d}\n", .{ interner.get(variant.name) orelse "<missing>", @tagName(variant.kind), variant.fields.len });
+                    const fields_start: usize = @intCast(variant.fields.start);
+                    const fields_end: usize = @intCast(variant.fields.end());
+                    for (hir.enum_fields.items[fields_start..fields_end]) |field| {
+                        try output.writer.writeAll("      Field ");
+                        if (field.name) |name| try output.writer.print("{s}: ", .{interner.get(name) orelse "<missing>"});
+                        try dumpType(&output.writer, hir, interner, field.type_expr);
+                        try output.writer.writeByte('\n');
+                    }
+                }
+            },
             .impl_decl => |impl_decl| {
                 try output.writer.print("  Impl {s} methods={d}\n", .{ @tagName(impl_decl.visibility), impl_decl.methods.len });
                 const start: usize = @intCast(impl_decl.methods.start);
@@ -967,6 +1125,25 @@ fn writeIndent(writer: *std.Io.Writer, indent: usize) std.Io.Writer.Error!void {
 
 fn dumpNamed(writer: *std.Io.Writer, interner: *const base.Interner, label: []const u8, decl: NamedDecl) std.Io.Writer.Error!void {
     try writer.print("  {s} {s} {s}\n", .{ label, @tagName(decl.visibility), interner.get(decl.name) orelse "<missing>" });
+}
+
+fn dumpType(writer: *std.Io.Writer, hir: *const Hir, interner: *const base.Interner, type_id: TypeId) std.Io.Writer.Error!void {
+    switch (hir.types.items[type_id]) {
+        .unit => try writer.writeAll("()"),
+        .path => |path| {
+            try dumpPath(writer, hir, interner, path.segments);
+            if (path.args.len != 0) {
+                try writer.writeByte('<');
+                const start: usize = @intCast(path.args.start);
+                const end: usize = @intCast(path.args.end());
+                for (hir.type_args.items[start..end], 0..) |arg, index| {
+                    if (index != 0) try writer.writeAll(", ");
+                    try dumpType(writer, hir, interner, arg);
+                }
+                try writer.writeByte('>');
+            }
+        },
+    }
 }
 
 fn dumpPath(writer: *std.Io.Writer, hir: *const Hir, interner: *const base.Interner, path: base.Range) std.Io.Writer.Error!void {

@@ -1,8 +1,10 @@
 HirRoot
   Import package std.fs
-  Struct public User
-  Enum package Status
-  TypeAlias package UserId
+  Struct public User fields=1
+    Field public name: Str
+  Enum package Status variants=1
+    Variant Ready unit fields=0
+  TypeAlias package UserId = Int
   Interface package Reader
   Impl package methods=1
     Method package display_name params=1
