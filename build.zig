@@ -85,6 +85,16 @@ pub fn build(b: *std.Build) void {
     hir_fixture_tests.root_module.addImport("veyl", veyl_mod);
     const run_hir_fixture_tests = b.addRunArtifact(hir_fixture_tests);
 
+    const resolver_fixture_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/resolver_fixtures.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    resolver_fixture_tests.root_module.addImport("veyl", veyl_mod);
+    const run_resolver_fixture_tests = b.addRunArtifact(resolver_fixture_tests);
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_lexer_fixture_tests.step);
@@ -92,6 +102,7 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_fmt_fixture_tests.step);
     test_step.dependOn(&run_diagnostic_fixture_tests.step);
     test_step.dependOn(&run_hir_fixture_tests.step);
+    test_step.dependOn(&run_resolver_fixture_tests.step);
 
     const fmt_step = b.step("fmt", "Format Zig source");
     fmt_step.dependOn(&b.addFmt(.{
@@ -120,5 +131,6 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&fmt_fixture_tests.step);
     check_step.dependOn(&diagnostic_fixture_tests.step);
     check_step.dependOn(&hir_fixture_tests.step);
+    check_step.dependOn(&resolver_fixture_tests.step);
     check_step.dependOn(fmt_check_step);
 }

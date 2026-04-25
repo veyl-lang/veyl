@@ -1,0 +1,6 @@
+ResolvedModule
+  Symbol struct_type User
+  Symbol enum_type Status
+  Symbol type_alias UserId
+  Symbol interface_type Reader
+  Symbol function main

@@ -1,0 +1,11 @@
+struct User {
+    name: Str,
+}
+enum Status {
+    Ready,
+}
+type UserId = Int;
+interface Reader {
+    fn read(self) -> Bytes;
+}
+fn main() {}

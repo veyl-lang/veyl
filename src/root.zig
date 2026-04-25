@@ -5,6 +5,7 @@ pub const hir = @import("hir.zig");
 pub const host = @import("host.zig");
 pub const lexer = @import("lexer.zig");
 pub const parser = @import("parser.zig");
+pub const resolve = @import("resolve.zig");
 
 pub const version = "0.0.1";
 
@@ -16,6 +17,7 @@ test {
     _ = host;
     _ = lexer;
     _ = parser;
+    _ = resolve;
 }
 
 test "version is available" {

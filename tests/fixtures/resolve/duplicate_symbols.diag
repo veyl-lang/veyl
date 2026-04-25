@@ -1,0 +1,6 @@
+error: duplicate top-level declaration
+  --> duplicate_symbols.veyl:4:1
+   |
+  4 | fn User() {}
+   | ^^^^^^^^^^^^
+label: 1:1: first declaration is here
