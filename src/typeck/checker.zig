@@ -231,7 +231,17 @@ fn inferBinaryExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interne
             }
             return .bool;
         },
-        .assign => return left_type,
+        .assign => {
+            if (left_type != .unknown and right_type != .unknown and left_type != right_type) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = exprSpan(module, binary.right),
+                    .message = "assignment value type mismatch",
+                });
+                return .unknown;
+            }
+            return left_type;
+        },
     }
 }
 

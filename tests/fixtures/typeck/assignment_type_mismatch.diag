@@ -1,0 +1,5 @@
+error: assignment value type mismatch
+  --> assignment_type_mismatch.veyl:3:13
+   |
+  3 |     value = true;
+   |             ^^^^
