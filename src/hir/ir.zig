@@ -101,7 +101,24 @@ pub const FunctionParam = struct {
 
 pub const ImplDecl = struct {
     visibility: parser.Visibility,
+    interface_type: ?TypeId,
+    self_type: TypeId,
     methods: base.Range,
+    span: base.Span,
+};
+
+pub const InterfaceDecl = struct {
+    visibility: parser.Visibility,
+    name: base.SymbolId,
+    methods: base.Range,
+    span: base.Span,
+};
+
+pub const InterfaceMethod = struct {
+    visibility: parser.Visibility,
+    name: base.SymbolId,
+    params: base.Range,
+    return_type: ?TypeId,
     span: base.Span,
 };
 
@@ -212,7 +229,7 @@ pub const Decl = union(enum) {
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
     impl_decl: ImplDecl,
-    interface_decl: NamedDecl,
+    interface_decl: InterfaceDecl,
     test_decl: TestDecl,
 };
 
@@ -229,6 +246,7 @@ pub const Hir = struct {
     enum_variants: std.ArrayListUnmanaged(EnumVariant) = .empty,
     enum_fields: std.ArrayListUnmanaged(EnumField) = .empty,
     impl_methods: std.ArrayListUnmanaged(FunctionDecl) = .empty,
+    interface_methods: std.ArrayListUnmanaged(InterfaceMethod) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
     block_stmt_ids: std.ArrayListUnmanaged(StmtId) = .empty,
@@ -255,6 +273,7 @@ pub const Hir = struct {
         self.enum_variants.deinit(self.allocator);
         self.enum_fields.deinit(self.allocator);
         self.impl_methods.deinit(self.allocator);
+        self.interface_methods.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
         self.block_stmt_ids.deinit(self.allocator);
@@ -308,12 +327,15 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
             } },
             .impl_decl => |impl_decl| .{ .impl_decl = .{
                 .visibility = impl_decl.visibility,
+                .interface_type = if (impl_decl.interface_type) |interface_type| try lowerType(&hir, ast, interface_type) else null,
+                .self_type = try lowerType(&hir, ast, impl_decl.self_type),
                 .methods = try lowerImplMethods(&hir, ast, impl_decl.methods),
                 .span = impl_decl.span,
             } },
             .interface_decl => |interface_decl| .{ .interface_decl = .{
                 .visibility = interface_decl.visibility,
                 .name = interface_decl.name,
+                .methods = try lowerInterfaceMethods(&hir, ast, interface_decl.methods),
                 .span = interface_decl.span,
             } },
             .test_decl => |test_decl| .{ .test_decl = .{
@@ -446,6 +468,22 @@ fn lowerImplMethods(hir: *Hir, ast: *const parser.Ast, methods: base.Range) Allo
         try hir.impl_methods.append(hir.allocator, try lowerFunctionDecl(hir, ast, method));
     }
     return .{ .start = methods_start, .len = @intCast(hir.impl_methods.items.len - methods_start) };
+}
+
+fn lowerInterfaceMethods(hir: *Hir, ast: *const parser.Ast, methods: base.Range) Allocator.Error!base.Range {
+    const methods_start: u32 = @intCast(hir.interface_methods.items.len);
+    const start: usize = @intCast(methods.start);
+    const end: usize = @intCast(methods.end());
+    for (ast.interface_methods.items[start..end]) |method| {
+        try hir.interface_methods.append(hir.allocator, .{
+            .visibility = method.visibility,
+            .name = method.name,
+            .params = try lowerFunctionParams(hir, ast, method.params),
+            .return_type = if (method.return_type) |return_type| try lowerType(hir, ast, return_type) else null,
+            .span = method.span,
+        });
+    }
+    return .{ .start = methods_start, .len = @intCast(hir.interface_methods.items.len - methods_start) };
 }
 
 fn lowerBlock(hir: *Hir, ast: *const parser.Ast, block_id: parser.ast.BlockId) Allocator.Error!BlockId {
@@ -802,7 +840,10 @@ pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Inte
                     try dumpBlock(&output.writer, hir, interner, method.body, 3);
                 }
             },
-            .interface_decl => |decl_info| try dumpNamed(&output.writer, interner, "Interface", decl_info),
+            .interface_decl => |interface_decl| try output.writer.print("  Interface {s} {s}\n", .{
+                @tagName(interface_decl.visibility),
+                interner.get(interface_decl.name) orelse "<missing>",
+            }),
             .test_decl => |test_decl| {
                 try output.writer.writeAll("  Test\n");
                 try dumpBlock(&output.writer, hir, interner, test_decl.body, 2);
