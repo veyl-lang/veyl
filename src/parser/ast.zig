@@ -7,6 +7,7 @@ const DumpError = Allocator.Error || std.Io.Writer.Error;
 pub const DeclId = base.DeclId;
 pub const BlockId = u32;
 pub const ExprId = base.ExprId;
+pub const StmtId = base.StmtId;
 
 pub const Visibility = enum {
     package,
@@ -86,6 +87,7 @@ pub const Expr = union(enum) {
     field: struct { base: ExprId, name: base.SymbolId, name_span: base.Span, span: base.Span },
     call: struct { callee: ExprId, args: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
+    if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
 
     pub fn span(self: Expr) base.Span {
         return switch (self) {
@@ -99,6 +101,7 @@ pub const Expr = union(enum) {
             .field => |expr| expr.span,
             .call => |expr| expr.span,
             .struct_literal => |expr| expr.span,
+            .if_expr => |expr| expr.span,
         };
     }
 };
@@ -209,6 +212,7 @@ pub const Ast = struct {
     struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
+    block_stmt_ids: std.ArrayListUnmanaged(StmtId) = .empty,
     struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
     enum_variants: std.ArrayListUnmanaged(EnumVariant) = .empty,
     enum_fields: std.ArrayListUnmanaged(EnumField) = .empty,
@@ -229,6 +233,7 @@ pub const Ast = struct {
         self.struct_literal_fields.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
+        self.block_stmt_ids.deinit(self.allocator);
         self.struct_fields.deinit(self.allocator);
         self.enum_variants.deinit(self.allocator);
         self.enum_fields.deinit(self.allocator);
@@ -283,12 +288,22 @@ pub const Ast = struct {
         try self.struct_literal_fields.append(self.allocator, field);
     }
 
-    pub fn reserveStmts(self: *const Ast) u32 {
-        return @intCast(self.stmts.items.len);
+    pub fn reserveBlockStmtIds(self: *const Ast) u32 {
+        return @intCast(self.block_stmt_ids.items.len);
     }
 
-    pub fn addStmt(self: *Ast, stmt: Stmt) Allocator.Error!void {
+    pub fn addBlockStmtId(self: *Ast, stmt_id: StmtId) Allocator.Error!void {
+        try self.block_stmt_ids.append(self.allocator, stmt_id);
+    }
+
+    pub fn addStmt(self: *Ast, stmt: Stmt) Allocator.Error!StmtId {
+        const id: StmtId = @intCast(self.stmts.items.len);
         try self.stmts.append(self.allocator, stmt);
+        return id;
+    }
+
+    pub fn reserveStmts(self: *const Ast) u32 {
+        return @intCast(self.stmts.items.len);
     }
 
     pub fn addBlock(self: *Ast, block: Block) Allocator.Error!BlockId {
@@ -381,8 +396,8 @@ fn dumpBlock(
 
     const start: usize = @intCast(block.stmts.start);
     const end: usize = @intCast(block.stmts.end());
-    for (ast.stmts.items[start..end]) |stmt| {
-        try dumpStmt(writer, ast, interner, stmt, indent + 1);
+    for (ast.block_stmt_ids.items[start..end]) |stmt_id| {
+        try dumpStmt(writer, ast, interner, ast.stmts.items[stmt_id], indent + 1);
     }
 
     if (block.final_expr) |final_expr| {
@@ -468,6 +483,20 @@ fn dumpExpr(
                 if (field.value) |value| {
                     try dumpExpr(writer, ast, interner, value, indent + 2);
                 }
+            }
+        },
+        .if_expr => |if_expr| {
+            try writer.writeAll("IfExpr\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Condition\n");
+            try dumpExpr(writer, ast, interner, if_expr.condition, indent + 2);
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Then\n");
+            try dumpBlock(writer, ast, interner, ast.blocks.items[if_expr.then_block], indent + 2);
+            if (if_expr.else_block) |else_block| {
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("Else\n");
+                try dumpBlock(writer, ast, interner, ast.blocks.items[else_block], indent + 2);
             }
         },
     }
@@ -657,7 +686,7 @@ test "AST dump renders function declarations" {
         .symbol = try interner.intern("user"),
         .span = .{ .source = 0, .start = 38, .len = 4 },
     } });
-    const stmts_start = tree.reserveStmts();
+    const stmts_start = tree.reserveBlockStmtIds();
     const body = try tree.addBlock(.{
         .stmts = .{ .start = stmts_start, .len = 0 },
         .span = .{ .source = 0, .start = 35, .len = 2 },

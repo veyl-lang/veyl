@@ -1,0 +1,13 @@
+fn label(age: Int) -> Str {
+    if age >= 18 {
+        "adult"
+    } else {
+        "minor"
+    }
+}
+
+fn log_if(ok: Bool) {
+    if ok {
+        print("ok");
+    };
+}

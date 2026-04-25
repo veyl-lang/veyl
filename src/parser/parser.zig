@@ -34,6 +34,7 @@ const Parser = struct {
     diagnostics: *diag.DiagnosticBag,
     tree: ast_mod.Ast,
     index: usize = 0,
+    allow_struct_literal: bool = true,
 
     fn parseRoot(self: *Parser) Allocator.Error!void {
         while (true) {
@@ -175,8 +176,8 @@ const Parser = struct {
 
     fn parseBlock(self: *Parser) Allocator.Error!ast_mod.BlockId {
         const open = (try self.expect(.l_brace, "expected function body")) orelse return self.emptyBlock(self.peek().span);
-        const stmts_start = self.tree.reserveStmts();
-        var stmts_len: u32 = 0;
+        var block_stmt_ids: std.ArrayListUnmanaged(ast_mod.StmtId) = .empty;
+        defer block_stmt_ids.deinit(self.tree.allocator);
         var final_expr: ?ast_mod.ExprId = null;
         var end_span = open.span;
 
@@ -186,20 +187,17 @@ const Parser = struct {
 
             if (self.peekKind() == .keyword_let) {
                 const stmt = try self.parseLetStmt();
-                try self.tree.addStmt(.{ .let_stmt = stmt });
-                stmts_len += 1;
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .let_stmt = stmt }));
                 end_span = stmt.span;
             } else if (self.peekKind() == .keyword_return) {
                 const stmt = try self.parseReturnStmt();
-                try self.tree.addStmt(.{ .return_stmt = stmt });
-                stmts_len += 1;
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .return_stmt = stmt }));
                 end_span = stmt.span;
             } else {
                 const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
                 end_span = self.tree.exprs.items[expr].span();
                 if (self.match(.semicolon)) |semicolon| {
-                    try self.tree.addStmt(.{ .expr_stmt = expr });
-                    stmts_len += 1;
+                    try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .expr_stmt = expr }));
                     end_span = semicolon.span;
                 } else {
                     final_expr = expr;
@@ -214,8 +212,13 @@ const Parser = struct {
             try self.addError(self.peek().span, "expected `}` after block");
         }
 
+        const stmts_start = self.tree.reserveBlockStmtIds();
+        for (block_stmt_ids.items) |stmt_id| {
+            try self.tree.addBlockStmtId(stmt_id);
+        }
+
         return self.tree.addBlock(.{
-            .stmts = .{ .start = stmts_start, .len = stmts_len },
+            .stmts = .{ .start = stmts_start, .len = @intCast(block_stmt_ids.items.len) },
             .final_expr = final_expr,
             .span = base.Span.join(open.span, end_span),
         });
@@ -223,7 +226,7 @@ const Parser = struct {
 
     fn emptyBlock(self: *Parser, span: base.Span) Allocator.Error!ast_mod.BlockId {
         return self.tree.addBlock(.{
-            .stmts = .{ .start = self.tree.reserveStmts(), .len = 0 },
+            .stmts = .{ .start = self.tree.reserveBlockStmtIds(), .len = 0 },
             .span = span,
         });
     }
@@ -337,7 +340,7 @@ const Parser = struct {
                     .args = .{ .start = args_start, .len = args_len },
                     .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
                 } });
-            } else if (self.match(.l_brace)) |_| {
+            } else if (self.allow_struct_literal and self.match(.l_brace) != null) {
                 const fields_start = self.tree.reserveStructLiteralFields();
                 var fields_len: u32 = 0;
                 var end_span = self.tree.exprs.items[expr].span();
@@ -392,6 +395,7 @@ const Parser = struct {
             .char_literal => return self.tree.addExpr(.{ .char_literal = token.span }),
             .keyword_true => return self.tree.addExpr(.{ .bool_literal = .{ .value = true, .span = token.span } }),
             .keyword_false => return self.tree.addExpr(.{ .bool_literal = .{ .value = false, .span = token.span } }),
+            .keyword_if => return self.parseIfExpr(token.span),
             .l_paren => {
                 const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
                 _ = try self.expect(.r_paren, "expected `)` after expression");
@@ -405,6 +409,29 @@ const Parser = struct {
                 } });
             },
         }
+    }
+
+    fn parseIfExpr(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {
+        const old_allow_struct_literal = self.allow_struct_literal;
+        self.allow_struct_literal = false;
+        defer self.allow_struct_literal = old_allow_struct_literal;
+        const condition = try self.parseExpression(@intFromEnum(Precedence.lowest));
+
+        const then_block = try self.parseBlock();
+        var else_block: ?ast_mod.BlockId = null;
+        var end_span = self.tree.blocks.items[then_block].span;
+
+        if (self.match(.keyword_else) != null) {
+            else_block = try self.parseBlock();
+            end_span = self.tree.blocks.items[else_block.?].span;
+        }
+
+        return self.tree.addExpr(.{ .if_expr = .{
+            .condition = condition,
+            .then_block = then_block,
+            .else_block = else_block,
+            .span = base.Span.join(start_span, end_span),
+        } });
     }
 
     const BinaryOpInfo = struct {

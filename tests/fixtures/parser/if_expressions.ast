@@ -1,0 +1,33 @@
+Root
+  FnDecl package label
+    Param age: Int
+    Return Str
+    Block
+      FinalExpr
+        IfExpr
+          Condition
+            Binary greater_equal
+              Name age
+              IntLiteral
+          Then
+            Block
+              FinalExpr
+                StringLiteral
+          Else
+            Block
+              FinalExpr
+                StringLiteral
+  FnDecl package log_if
+    Param ok: Bool
+    Return ()
+    Block
+      ExprStmt
+        IfExpr
+          Condition
+            Name ok
+          Then
+            Block
+              ExprStmt
+                Call
+                  Name print
+                  StringLiteral
