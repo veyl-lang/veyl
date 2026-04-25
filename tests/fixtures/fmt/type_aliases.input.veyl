@@ -1,0 +1,2 @@
+pub type UserId = Int;
+type UserMap<T: Hash> = Map<UserId, T>;

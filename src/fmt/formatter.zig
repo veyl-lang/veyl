@@ -12,11 +12,27 @@ pub fn formatAst(allocator: Allocator, ast: *const ast_mod.Ast, interner: *const
     for (ast.decls.items) |decl| {
         switch (decl) {
             .import => |import_decl| try formatImport(&output.writer, ast, interner, import_decl),
+            .type_alias => |type_alias| try formatTypeAlias(&output.writer, ast, interner, type_alias),
             else => {},
         }
     }
 
     return output.toOwnedSlice();
+}
+
+fn formatTypeAlias(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    type_alias: ast_mod.TypeAliasDecl,
+) std.Io.Writer.Error!void {
+    try writeVisibility(writer, type_alias.visibility);
+    try writer.writeAll("type ");
+    try writer.writeAll(interner.get(type_alias.name) orelse "<missing>");
+    try writeGenericParams(writer, ast, interner, type_alias.generic_params);
+    try writer.writeAll(" = ");
+    try writeTypeExpr(writer, ast, interner, type_alias.aliased_type);
+    try writer.writeAll(";\n");
 }
 
 fn formatImport(
@@ -25,11 +41,7 @@ fn formatImport(
     interner: *const base.Interner,
     import_decl: ast_mod.ImportDecl,
 ) std.Io.Writer.Error!void {
-    switch (import_decl.visibility) {
-        .public => try writer.writeAll("pub "),
-        .private => try writer.writeAll("private "),
-        .package => {},
-    }
+    try writeVisibility(writer, import_decl.visibility);
     try writer.writeAll("import ");
     try writePath(writer, ast, interner, import_decl.path);
     if (import_decl.items.len != 0) {
@@ -51,6 +63,59 @@ fn formatImport(
         try writer.writeAll(interner.get(alias) orelse "<missing>");
     }
     try writer.writeByte('\n');
+}
+
+fn writeVisibility(writer: *std.Io.Writer, visibility: ast_mod.Visibility) std.Io.Writer.Error!void {
+    switch (visibility) {
+        .public => try writer.writeAll("pub "),
+        .private => try writer.writeAll("private "),
+        .package => {},
+    }
+}
+
+fn writeGenericParams(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    params: base.Range,
+) std.Io.Writer.Error!void {
+    if (params.len == 0) return;
+    try writer.writeByte('<');
+    const start: usize = @intCast(params.start);
+    const end: usize = @intCast(params.end());
+    for (ast.generic_params.items[start..end], 0..) |param, index| {
+        if (index != 0) try writer.writeAll(", ");
+        try writer.writeAll(interner.get(param.name) orelse "<missing>");
+        if (param.constraint) |constraint| {
+            try writer.writeAll(": ");
+            try writeTypeExpr(writer, ast, interner, constraint);
+        }
+    }
+    try writer.writeByte('>');
+}
+
+fn writeTypeExpr(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    type_id: ast_mod.TypeId,
+) std.Io.Writer.Error!void {
+    switch (ast.types.items[type_id]) {
+        .unit => try writer.writeAll("()"),
+        .path => |path_type| {
+            try writePath(writer, ast, interner, path_type.segments);
+            if (path_type.args.len != 0) {
+                try writer.writeByte('<');
+                const start: usize = @intCast(path_type.args.start);
+                const end: usize = @intCast(path_type.args.end());
+                for (ast.type_args.items[start..end], 0..) |arg, index| {
+                    if (index != 0) try writer.writeAll(", ");
+                    try writeTypeExpr(writer, ast, interner, arg);
+                }
+                try writer.writeByte('>');
+            }
+        },
+    }
 }
 
 fn writePath(
