@@ -1,0 +1,7 @@
+fn connect(url: Str, timeout: Duration = 30.seconds(), retries: Int = 3) -> Result<Connection, NetError> {
+    open(url, timeout, retries)
+}
+
+interface Client {
+    fn request(path: Str, create: Bool = false) -> Result<Response, Error>;
+}

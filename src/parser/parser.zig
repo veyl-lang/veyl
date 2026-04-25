@@ -428,12 +428,19 @@ const Parser = struct {
         };
 
         const type_expr = try self.parseTypeExpr("expected function parameter type");
+        var default_value: ?ast_mod.ExprId = null;
+        var end_span = self.tree.types.items[type_expr].span();
+        if (self.match(.equal) != null) {
+            default_value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+            end_span = self.tree.exprs.items[default_value.?].span();
+        }
         return .{
             .is_mut = is_mut,
             .name = try self.internToken(name_token),
             .name_span = name_token.span,
             .type_expr = type_expr,
-            .span = base.Span.join(start_span, self.previous().span),
+            .default_value = default_value,
+            .span = base.Span.join(start_span, end_span),
         };
     }
 

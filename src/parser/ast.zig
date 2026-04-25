@@ -65,6 +65,7 @@ pub const FnParam = struct {
     name: base.SymbolId,
     name_span: base.Span,
     type_expr: TypeId,
+    default_value: ?ExprId = null,
     span: base.Span,
 };
 
@@ -731,7 +732,12 @@ fn dumpFnLike(
             interner.get(param.name) orelse "<missing>",
         });
         try dumpTypeExpr(writer, ast, interner, param.type_expr);
-        try writer.writeByte('\n');
+        if (param.default_value) |default_value| {
+            try writer.writeAll(" =\n");
+            try dumpExpr(writer, ast, interner, default_value, indent + 2);
+        } else {
+            try writer.writeByte('\n');
+        }
     }
 
     try writeIndent(writer, indent + 1);
@@ -1181,7 +1187,12 @@ fn dumpInterfaceMethod(
             interner.get(param.name) orelse "<missing>",
         });
         try dumpTypeExpr(writer, ast, interner, param.type_expr);
-        try writer.writeByte('\n');
+        if (param.default_value) |default_value| {
+            try writer.writeAll(" =\n");
+            try dumpExpr(writer, ast, interner, default_value, indent + 2);
+        } else {
+            try writer.writeByte('\n');
+        }
     }
 
     try writeIndent(writer, indent + 1);

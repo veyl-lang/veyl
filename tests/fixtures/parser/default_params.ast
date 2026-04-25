@@ -1,0 +1,23 @@
+Root
+  FnDecl package connect
+    Param url: Str
+    Param timeout: Duration =
+      Call
+        Field seconds
+          IntLiteral
+    Param retries: Int =
+      IntLiteral
+    Return Result<Connection, NetError>
+    Block
+      FinalExpr
+        Call
+          Name open
+          Name url
+          Name timeout
+          Name retries
+  InterfaceDecl package Client
+    Method package request
+      Param path: Str
+      Param create: Bool =
+        BoolLiteral false
+      Return Result<Response, Error>
