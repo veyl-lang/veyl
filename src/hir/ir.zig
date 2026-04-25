@@ -92,12 +92,24 @@ pub const Pattern = union(enum) {
     wildcard: base.Span,
     binding: struct { name: base.SymbolId, span: base.Span },
     int_literal: base.Span,
+    float_literal: base.Span,
     string_literal: base.Span,
+    char_literal: base.Span,
+    bool_literal: struct { value: bool, span: base.Span },
     path: struct { segments: base.Range, span: base.Span },
     tuple: struct { path: base.Range, args: base.Range, span: base.Span },
+    record: struct { path: base.Range, fields: base.Range, has_rest: bool, span: base.Span },
+    array: struct { items: base.Range, span: base.Span },
+    rest: struct { name: ?base.SymbolId, span: base.Span },
     range: struct { start: PatternId, end: PatternId, inclusive: bool, span: base.Span },
     or_pattern: struct { patterns: base.Range, span: base.Span },
     unsupported: base.Span,
+};
+
+pub const PatternRecordField = struct {
+    name: base.SymbolId,
+    pattern: ?PatternId,
+    span: base.Span,
 };
 
 pub const MatchArmBody = union(enum) {
@@ -155,6 +167,7 @@ pub const Hir = struct {
     struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
     patterns: std.ArrayListUnmanaged(Pattern) = .empty,
     pattern_args: std.ArrayListUnmanaged(PatternId) = .empty,
+    pattern_record_fields: std.ArrayListUnmanaged(PatternRecordField) = .empty,
     match_arms: std.ArrayListUnmanaged(MatchArm) = .empty,
 
     pub fn init(allocator: Allocator, source: base.SourceId) Hir {
@@ -173,6 +186,7 @@ pub const Hir = struct {
         self.struct_literal_fields.deinit(self.allocator);
         self.patterns.deinit(self.allocator);
         self.pattern_args.deinit(self.allocator);
+        self.pattern_record_fields.deinit(self.allocator);
         self.match_arms.deinit(self.allocator);
         self.* = undefined;
     }
@@ -471,13 +485,27 @@ fn lowerPattern(hir: *Hir, ast: *const parser.Ast, pattern_id: parser.PatternId)
         .wildcard => |span| .{ .wildcard = span },
         .binding => |binding| .{ .binding = .{ .name = binding.name, .span = binding.span } },
         .int_literal => |span| .{ .int_literal = span },
+        .float_literal => |span| .{ .float_literal = span },
         .string_literal => |span| .{ .string_literal = span },
+        .char_literal => |span| .{ .char_literal = span },
+        .bool_literal => |bool_pattern| .{ .bool_literal = .{ .value = bool_pattern.value, .span = bool_pattern.span } },
         .path => |path| .{ .path = .{ .segments = path.segments, .span = path.span } },
         .tuple => |tuple| .{ .tuple = .{
             .path = tuple.path,
             .args = try lowerPatternRange(hir, ast, tuple.args),
             .span = tuple.span,
         } },
+        .record => |record| .{ .record = .{
+            .path = record.path,
+            .fields = try lowerPatternRecordFields(hir, ast, record.fields),
+            .has_rest = record.has_rest,
+            .span = record.span,
+        } },
+        .array => |array| .{ .array = .{
+            .items = try lowerPatternRange(hir, ast, array.items),
+            .span = array.span,
+        } },
+        .rest => |rest| .{ .rest = .{ .name = rest.name, .span = rest.span } },
         .range => |range| .{ .range = .{
             .start = try lowerPattern(hir, ast, range.start),
             .end = try lowerPattern(hir, ast, range.end),
@@ -488,7 +516,6 @@ fn lowerPattern(hir: *Hir, ast: *const parser.Ast, pattern_id: parser.PatternId)
             .patterns = try lowerPatternRange(hir, ast, or_pattern.patterns),
             .span = or_pattern.span,
         } },
-        else => .{ .unsupported = pattern.span() },
     };
 
     const lowered_id: PatternId = @intCast(hir.patterns.items.len);
@@ -504,6 +531,20 @@ fn lowerPatternRange(hir: *Hir, ast: *const parser.Ast, patterns: base.Range) Al
         try hir.pattern_args.append(hir.allocator, try lowerPattern(hir, ast, pattern));
     }
     return .{ .start = patterns_start, .len = @intCast(hir.pattern_args.items.len - patterns_start) };
+}
+
+fn lowerPatternRecordFields(hir: *Hir, ast: *const parser.Ast, fields: base.Range) Allocator.Error!base.Range {
+    const fields_start: u32 = @intCast(hir.pattern_record_fields.items.len);
+    const start: usize = @intCast(fields.start);
+    const end: usize = @intCast(fields.end());
+    for (ast.pattern_record_fields.items[start..end]) |field| {
+        try hir.pattern_record_fields.append(hir.allocator, .{
+            .name = field.name,
+            .pattern = if (field.pattern) |pattern| try lowerPattern(hir, ast, pattern) else null,
+            .span = field.span,
+        });
+    }
+    return .{ .start = fields_start, .len = @intCast(hir.pattern_record_fields.items.len - fields_start) };
 }
 
 fn lowerUnsupportedExpr(hir: *Hir, span: base.Span) Allocator.Error!ExprId {
@@ -812,7 +853,10 @@ fn dumpPattern(
         .wildcard => try writer.writeAll("Pattern Wildcard\n"),
         .binding => |binding| try writer.print("Pattern Binding {s}\n", .{interner.get(binding.name) orelse "<missing>"}),
         .int_literal => try writer.writeAll("Pattern IntLiteral\n"),
+        .float_literal => try writer.writeAll("Pattern FloatLiteral\n"),
         .string_literal => try writer.writeAll("Pattern StringLiteral\n"),
+        .char_literal => try writer.writeAll("Pattern CharLiteral\n"),
+        .bool_literal => |bool_pattern| try writer.print("Pattern BoolLiteral {}\n", .{bool_pattern.value}),
         .path => |path| {
             try writer.writeAll("Pattern Path ");
             try dumpPath(writer, hir, interner, path.segments);
@@ -826,6 +870,34 @@ fn dumpPattern(
             const end: usize = @intCast(tuple.args.end());
             for (hir.pattern_args.items[start..end]) |arg| {
                 try dumpPattern(writer, hir, interner, arg, indent + 1);
+            }
+        },
+        .record => |record| {
+            try writer.writeAll("Pattern Record ");
+            try dumpPath(writer, hir, interner, record.path);
+            if (record.has_rest) try writer.writeAll(" rest");
+            try writer.writeByte('\n');
+            const start: usize = @intCast(record.fields.start);
+            const end: usize = @intCast(record.fields.end());
+            for (hir.pattern_record_fields.items[start..end]) |field| {
+                try writeIndent(writer, indent + 1);
+                try writer.print("Field {s}\n", .{interner.get(field.name) orelse "<missing>"});
+                if (field.pattern) |field_pattern| try dumpPattern(writer, hir, interner, field_pattern, indent + 2);
+            }
+        },
+        .array => |array| {
+            try writer.writeAll("Pattern Array\n");
+            const start: usize = @intCast(array.items.start);
+            const end: usize = @intCast(array.items.end());
+            for (hir.pattern_args.items[start..end]) |item| {
+                try dumpPattern(writer, hir, interner, item, indent + 1);
+            }
+        },
+        .rest => |rest| {
+            if (rest.name) |name| {
+                try writer.print("Pattern Rest {s}\n", .{interner.get(name) orelse "<missing>"});
+            } else {
+                try writer.writeAll("Pattern Rest\n");
             }
         },
         .range => |range| {

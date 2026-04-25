@@ -1,0 +1,14 @@
+fn route(parts: Array<Str>, user: User, flag: Bool) -> Str {
+    let path = match parts {
+        ["assets", ..rest] => rest.join("/"),
+        _ => "other",
+    };
+    let label = match user {
+        User { name, age: 32, .. } => name,
+        _ => path,
+    };
+    match flag {
+        true => label,
+        false => "disabled",
+    }
+}

@@ -1,0 +1,47 @@
+HirRoot
+  Function package route params=3
+    Block
+      Let path
+        Match
+          Value
+            Name parts
+          Arm
+            Pattern Array
+              Pattern StringLiteral
+              Pattern Rest rest
+            Body
+              Call
+                Field join
+                  Name rest
+                StringLiteral
+          Arm
+            Pattern Wildcard
+            Body
+              StringLiteral
+      Let label
+        Match
+          Value
+            Name user
+          Arm
+            Pattern Record User rest
+              Field name
+              Field age
+                Pattern IntLiteral
+            Body
+              Name name
+          Arm
+            Pattern Wildcard
+            Body
+              Name path
+      FinalExpr
+        Match
+          Value
+            Name flag
+          Arm
+            Pattern BoolLiteral true
+            Body
+              Name label
+          Arm
+            Pattern BoolLiteral false
+            Body
+              StringLiteral
