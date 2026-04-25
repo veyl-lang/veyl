@@ -1,0 +1,5 @@
+error: condition must be Bool
+  --> parameter_non_bool_condition.veyl:2:8
+   |
+  2 |     if value {
+   |        ^^^^^

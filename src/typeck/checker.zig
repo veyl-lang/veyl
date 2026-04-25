@@ -44,7 +44,7 @@ fn checkFunction(allocator: std.mem.Allocator, module: *const hir.Hir, interner:
     const start: usize = @intCast(function.params.start);
     const end: usize = @intCast(function.params.end());
     for (module.fn_params.items[start..end]) |param| {
-        try env.put(allocator, param.name, .unknown);
+        try env.put(allocator, param.name, typeFromAnnotation(module, interner, param.type_expr));
     }
 
     const actual = try checkBlock(allocator, module, &env, function.body, diagnostics);
