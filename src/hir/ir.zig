@@ -77,6 +77,11 @@ pub const StructLiteralField = struct {
 pub const Stmt = union(enum) {
     let_stmt: struct { name: ?base.SymbolId, value: ExprId, span: base.Span },
     return_stmt: struct { value: ?ExprId, span: base.Span },
+    while_stmt: struct { condition: ExprId, body: BlockId, span: base.Span },
+    for_stmt: struct { name: ?base.SymbolId, iterable: ExprId, body: BlockId, span: base.Span },
+    defer_stmt: struct { kind: parser.ast.DeferKind, body: BlockId, span: base.Span },
+    break_stmt: base.Span,
+    continue_stmt: base.Span,
     expr_stmt: ExprId,
     unsupported: base.Span,
 };
@@ -241,11 +246,24 @@ fn lowerStmt(hir: *Hir, ast: *const parser.Ast, stmt: parser.Stmt) Allocator.Err
             .span = return_stmt.span,
         } },
         .expr_stmt => |expr| .{ .expr_stmt = try lowerExpr(hir, ast, expr) },
-        .while_stmt => |while_stmt| .{ .unsupported = while_stmt.span },
-        .for_stmt => |for_stmt| .{ .unsupported = for_stmt.span },
-        .defer_stmt => |defer_stmt| .{ .unsupported = defer_stmt.span },
-        .break_stmt => |span| .{ .unsupported = span },
-        .continue_stmt => |span| .{ .unsupported = span },
+        .while_stmt => |while_stmt| .{ .while_stmt = .{
+            .condition = try lowerControlCondition(hir, ast, while_stmt.condition),
+            .body = try lowerBlock(hir, ast, while_stmt.body),
+            .span = while_stmt.span,
+        } },
+        .for_stmt => |for_stmt| .{ .for_stmt = .{
+            .name = bindingName(ast, for_stmt.pattern),
+            .iterable = try lowerExpr(hir, ast, for_stmt.iterable),
+            .body = try lowerBlock(hir, ast, for_stmt.body),
+            .span = for_stmt.span,
+        } },
+        .defer_stmt => |defer_stmt| .{ .defer_stmt = .{
+            .kind = defer_stmt.kind,
+            .body = try lowerBlock(hir, ast, defer_stmt.body),
+            .span = defer_stmt.span,
+        } },
+        .break_stmt => |span| .{ .break_stmt = span },
+        .continue_stmt => |span| .{ .continue_stmt = span },
     };
 }
 
@@ -454,6 +472,39 @@ fn dumpStmt(
             try writeIndent(writer, indent);
             try writer.writeAll("Return\n");
             if (return_stmt.value) |value| try dumpExpr(writer, hir, interner, value, indent + 1);
+        },
+        .while_stmt => |while_stmt| {
+            try writeIndent(writer, indent);
+            try writer.writeAll("While\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Condition\n");
+            try dumpExpr(writer, hir, interner, while_stmt.condition, indent + 2);
+            try dumpBlock(writer, hir, interner, while_stmt.body, indent + 1);
+        },
+        .for_stmt => |for_stmt| {
+            try writeIndent(writer, indent);
+            if (for_stmt.name) |name| {
+                try writer.print("For {s}\n", .{interner.get(name) orelse "<missing>"});
+            } else {
+                try writer.writeAll("ForPattern\n");
+            }
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Iterable\n");
+            try dumpExpr(writer, hir, interner, for_stmt.iterable, indent + 2);
+            try dumpBlock(writer, hir, interner, for_stmt.body, indent + 1);
+        },
+        .defer_stmt => |defer_stmt| {
+            try writeIndent(writer, indent);
+            try writer.print("Defer {s}\n", .{@tagName(defer_stmt.kind)});
+            try dumpBlock(writer, hir, interner, defer_stmt.body, indent + 1);
+        },
+        .break_stmt => {
+            try writeIndent(writer, indent);
+            try writer.writeAll("Break\n");
+        },
+        .continue_stmt => {
+            try writeIndent(writer, indent);
+            try writer.writeAll("Continue\n");
         },
         .expr_stmt => |expr| {
             try writeIndent(writer, indent);

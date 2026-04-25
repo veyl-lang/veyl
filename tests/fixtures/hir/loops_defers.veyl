@@ -1,0 +1,16 @@
+fn process(items: Array<Item>) -> Result<(), Error> {
+    defer {
+        cleanup();
+    }
+    defer err {
+        rollback();
+    }
+    while keep_running() {
+        break;
+    }
+    for item in items {
+        print(item);
+        continue;
+    }
+    return Ok(());
+}

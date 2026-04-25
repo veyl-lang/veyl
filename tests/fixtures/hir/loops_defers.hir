@@ -1,0 +1,32 @@
+HirRoot
+  Function package process params=1
+    Block
+      Defer always
+        Block
+          ExprStmt
+            Call
+              Name cleanup
+      Defer err
+        Block
+          ExprStmt
+            Call
+              Name rollback
+      While
+        Condition
+          Call
+            Name keep_running
+        Block
+          Break
+      For item
+        Iterable
+          Name items
+        Block
+          ExprStmt
+            Call
+              Name print
+              Name item
+          Continue
+      Return
+        Call
+          Name Ok
+          UnitLiteral
