@@ -18,10 +18,12 @@ pub fn formatAst(
         switch (decl) {
             .import => |import_decl| try formatImport(&output.writer, ast, interner, import_decl),
             .type_alias => |type_alias| try formatTypeAlias(&output.writer, ast, interner, type_alias),
-            .fn_decl => |fn_decl| try formatFn(&output.writer, ast, interner, source, fn_decl),
+            .fn_decl => |fn_decl| try formatFn(&output.writer, ast, interner, source, fn_decl, 0),
+            .impl_decl => |impl_decl| try formatImpl(&output.writer, ast, interner, source, impl_decl),
+            .interface_decl => |interface_decl| try formatInterface(&output.writer, ast, interner, source, interface_decl),
+            .test_decl => |test_decl| try formatTest(&output.writer, ast, interner, source, test_decl),
             .struct_decl => |struct_decl| try formatStruct(&output.writer, ast, interner, struct_decl),
             .enum_decl => |enum_decl| try formatEnum(&output.writer, ast, interner, enum_decl),
-            else => {},
         }
     }
 
@@ -34,7 +36,9 @@ fn formatFn(
     interner: *const base.Interner,
     source: []const u8,
     fn_decl: ast_mod.FnDecl,
+    indent: usize,
 ) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
     try writeVisibility(writer, fn_decl.visibility);
     try writer.writeAll("fn ");
     try writer.writeAll(interner.get(fn_decl.name) orelse "<missing>");
@@ -45,7 +49,90 @@ fn formatFn(
         try writeTypeExpr(writer, ast, interner, return_type);
     }
     try writer.writeByte(' ');
-    try writeBlock(writer, ast, interner, source, ast.blocks.items[fn_decl.body], 0);
+    try writeBlock(writer, ast, interner, source, ast.blocks.items[fn_decl.body], indent);
+}
+
+fn formatImpl(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    source: []const u8,
+    impl_decl: ast_mod.ImplDecl,
+) std.Io.Writer.Error!void {
+    try writeVisibility(writer, impl_decl.visibility);
+    try writer.writeAll("impl");
+    try writeGenericParams(writer, ast, interner, impl_decl.generic_params);
+    try writer.writeByte(' ');
+    if (impl_decl.interface_type) |interface_type| {
+        try writeTypeExpr(writer, ast, interner, interface_type);
+        try writer.writeAll(" for ");
+    }
+    try writeTypeExpr(writer, ast, interner, impl_decl.self_type);
+    try writer.writeAll(" {\n");
+
+    const start: usize = @intCast(impl_decl.methods.start);
+    const end: usize = @intCast(impl_decl.methods.end());
+    for (ast.impl_methods.items[start..end]) |method| {
+        try formatFn(writer, ast, interner, source, method, 1);
+    }
+
+    try writer.writeAll("}\n");
+}
+
+fn formatInterface(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    source: []const u8,
+    interface_decl: ast_mod.InterfaceDecl,
+) std.Io.Writer.Error!void {
+    try writeVisibility(writer, interface_decl.visibility);
+    try writer.writeAll("interface ");
+    try writer.writeAll(interner.get(interface_decl.name) orelse "<missing>");
+    try writeGenericParams(writer, ast, interner, interface_decl.generic_params);
+    try writer.writeAll(" {\n");
+
+    const start: usize = @intCast(interface_decl.methods.start);
+    const end: usize = @intCast(interface_decl.methods.end());
+    for (ast.interface_methods.items[start..end]) |method| {
+        try formatInterfaceMethod(writer, ast, interner, source, method, 1);
+    }
+
+    try writer.writeAll("}\n");
+}
+
+fn formatInterfaceMethod(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    source: []const u8,
+    method: ast_mod.InterfaceMethod,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
+    try writeVisibility(writer, method.visibility);
+    try writer.writeAll("fn ");
+    try writer.writeAll(interner.get(method.name) orelse "<missing>");
+    try writeGenericParams(writer, ast, interner, method.generic_params);
+    try writeFnParams(writer, ast, interner, source, method.params);
+    if (method.return_type) |return_type| {
+        try writer.writeAll(" -> ");
+        try writeTypeExpr(writer, ast, interner, return_type);
+    }
+    try writer.writeAll(";\n");
+}
+
+fn formatTest(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    source: []const u8,
+    test_decl: ast_mod.TestDecl,
+) std.Io.Writer.Error!void {
+    try writer.writeAll("test ");
+    try writer.writeAll(sourceSlice(source, test_decl.name_span));
+    try writer.writeByte(' ');
+    try writeBlock(writer, ast, interner, source, ast.blocks.items[test_decl.body], 0);
 }
 
 fn writeFnParams(
@@ -62,6 +149,7 @@ fn writeFnParams(
         if (index != 0) try writer.writeAll(", ");
         if (param.is_mut) try writer.writeAll("mut ");
         try writer.writeAll(interner.get(param.name) orelse "<missing>");
+        if (isImplicitSelfParam(ast, interner, param)) continue;
         try writer.writeAll(": ");
         try writeTypeExpr(writer, ast, interner, param.type_expr);
         if (param.default_value) |default_value| {
@@ -70,6 +158,26 @@ fn writeFnParams(
         }
     }
     try writer.writeByte(')');
+}
+
+fn isImplicitSelfParam(
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    param: ast_mod.FnParam,
+) bool {
+    const name = interner.get(param.name) orelse return false;
+    if (!std.mem.eql(u8, name, "self")) return false;
+
+    return switch (ast.types.items[param.type_expr]) {
+        .path => |path_type| blk: {
+            if (path_type.args.len != 0 or path_type.segments.len != 1) break :blk false;
+            const start: usize = @intCast(path_type.segments.start);
+            const segment = ast.path_segments.items[start];
+            const type_name = interner.get(segment.name) orelse break :blk false;
+            break :blk std.mem.eql(u8, type_name, "Self");
+        },
+        else => false,
+    };
 }
 
 fn writeBlock(
