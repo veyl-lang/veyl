@@ -205,17 +205,22 @@ fn resolveStmt(
         .let_stmt => |let_stmt| {
             try resolveExpr(allocator, module, interner, top_level, locals, let_stmt.value, diagnostics);
             if (let_stmt.else_block) |else_block| try resolveBlock(allocator, module, interner, top_level, locals, else_block, diagnostics);
-            if (let_stmt.name) |name| try locals.put(allocator, name, {});
+            try collectPatternBindings(allocator, module, locals, let_stmt.pattern);
         },
         .return_stmt => |return_stmt| if (return_stmt.value) |value| try resolveExpr(allocator, module, interner, top_level, locals, value, diagnostics),
         .while_stmt => |while_stmt| {
             try resolveControlCondition(allocator, module, interner, top_level, locals, while_stmt.condition, diagnostics);
-            try resolveBlock(allocator, module, interner, top_level, locals, while_stmt.body, diagnostics);
+            var body_locals = try copyLocals(allocator, locals);
+            defer body_locals.deinit(allocator);
+            try collectControlConditionBindings(allocator, module, &body_locals, while_stmt.condition);
+            try resolveBlock(allocator, module, interner, top_level, &body_locals, while_stmt.body, diagnostics);
         },
         .for_stmt => |for_stmt| {
             try resolveExpr(allocator, module, interner, top_level, locals, for_stmt.iterable, diagnostics);
-            if (for_stmt.name) |name| try locals.put(allocator, name, {});
-            try resolveBlock(allocator, module, interner, top_level, locals, for_stmt.body, diagnostics);
+            var body_locals = try copyLocals(allocator, locals);
+            defer body_locals.deinit(allocator);
+            try collectPatternBindings(allocator, module, &body_locals, for_stmt.pattern);
+            try resolveBlock(allocator, module, interner, top_level, &body_locals, for_stmt.body, diagnostics);
         },
         .defer_stmt => |defer_stmt| try resolveBlock(allocator, module, interner, top_level, locals, defer_stmt.body, diagnostics),
         .expr_stmt => |expr| try resolveExpr(allocator, module, interner, top_level, locals, expr, diagnostics),
@@ -284,14 +289,119 @@ fn resolveExpr(
         .block_expr => |block_expr| try resolveBlock(allocator, module, interner, top_level, locals, block_expr.block, diagnostics),
         .if_expr => |if_expr| {
             try resolveControlCondition(allocator, module, interner, top_level, locals, if_expr.condition, diagnostics);
-            try resolveBlock(allocator, module, interner, top_level, locals, if_expr.then_block, diagnostics);
+            var then_locals = try copyLocals(allocator, locals);
+            defer then_locals.deinit(allocator);
+            try collectControlConditionBindings(allocator, module, &then_locals, if_expr.condition);
+            try resolveBlock(allocator, module, interner, top_level, &then_locals, if_expr.then_block, diagnostics);
             if (if_expr.else_block) |else_block| try resolveBlock(allocator, module, interner, top_level, locals, else_block, diagnostics);
         },
-        .match_expr => |match_expr| try resolveExpr(allocator, module, interner, top_level, locals, match_expr.value, diagnostics),
+        .match_expr => |match_expr| try resolveMatchExpr(allocator, module, interner, top_level, locals, match_expr, diagnostics),
         .try_expr => |try_expr| try resolveExpr(allocator, module, interner, top_level, locals, try_expr.value, diagnostics),
-        .catch_expr => |catch_expr| try resolveExpr(allocator, module, interner, top_level, locals, catch_expr.value, diagnostics),
+        .catch_expr => |catch_expr| {
+            try resolveExpr(allocator, module, interner, top_level, locals, catch_expr.value, diagnostics);
+            var handler_locals = try copyLocals(allocator, locals);
+            defer handler_locals.deinit(allocator);
+            if (catch_expr.binding) |binding| try handler_locals.put(allocator, binding, {});
+            switch (catch_expr.handler) {
+                .expr => |expr| try resolveExpr(allocator, module, interner, top_level, &handler_locals, expr, diagnostics),
+                .block => |block| try resolveBlock(allocator, module, interner, top_level, &handler_locals, block, diagnostics),
+            }
+        },
         .int_literal, .float_literal, .string_literal, .char_literal, .bool_literal, .unit_literal, .unsupported => {},
     }
+}
+
+fn resolveMatchExpr(
+    allocator: Allocator,
+    module: *const hir.Hir,
+    interner: *const base.Interner,
+    top_level: *const std.AutoHashMapUnmanaged(base.SymbolId, base.Span),
+    locals: *std.AutoHashMapUnmanaged(base.SymbolId, void),
+    match_expr: anytype,
+    diagnostics: *diag.DiagnosticBag,
+) Allocator.Error!void {
+    try resolveExpr(allocator, module, interner, top_level, locals, match_expr.value, diagnostics);
+    const start: usize = @intCast(match_expr.arms.start);
+    const end: usize = @intCast(match_expr.arms.end());
+    for (module.match_arms.items[start..end]) |arm| {
+        var arm_locals = try copyLocals(allocator, locals);
+        defer arm_locals.deinit(allocator);
+        try collectPatternBindings(allocator, module, &arm_locals, arm.pattern);
+        if (arm.guard) |guard| try resolveExpr(allocator, module, interner, top_level, &arm_locals, guard, diagnostics);
+        switch (arm.body) {
+            .expr => |expr| try resolveExpr(allocator, module, interner, top_level, &arm_locals, expr, diagnostics),
+            .block => |block| try resolveBlock(allocator, module, interner, top_level, &arm_locals, block, diagnostics),
+        }
+    }
+}
+
+fn collectControlConditionBindings(
+    allocator: Allocator,
+    module: *const hir.Hir,
+    locals: *std.AutoHashMapUnmanaged(base.SymbolId, void),
+    condition: hir.ir.ControlCondition,
+) Allocator.Error!void {
+    switch (condition) {
+        .expr => {},
+        .let_pattern => |let_pattern| try collectPatternBindings(allocator, module, locals, let_pattern.pattern),
+    }
+}
+
+fn collectPatternBindings(
+    allocator: Allocator,
+    module: *const hir.Hir,
+    locals: *std.AutoHashMapUnmanaged(base.SymbolId, void),
+    pattern_id: hir.ir.PatternId,
+) Allocator.Error!void {
+    switch (module.patterns.items[pattern_id]) {
+        .binding => |binding| try locals.put(allocator, binding.name, {}),
+        .tuple => |tuple| try collectPatternRangeBindings(allocator, module, locals, tuple.args),
+        .record => |record| {
+            const start: usize = @intCast(record.fields.start);
+            const end: usize = @intCast(record.fields.end());
+            for (module.pattern_record_fields.items[start..end]) |field| {
+                if (field.pattern) |field_pattern| {
+                    try collectPatternBindings(allocator, module, locals, field_pattern);
+                } else {
+                    try locals.put(allocator, field.name, {});
+                }
+            }
+        },
+        .array => |array| try collectPatternRangeBindings(allocator, module, locals, array.items),
+        .rest => |rest| if (rest.name) |name| try locals.put(allocator, name, {}),
+        .range => |range| {
+            try collectPatternBindings(allocator, module, locals, range.start);
+            try collectPatternBindings(allocator, module, locals, range.end);
+        },
+        .or_pattern => |or_pattern| try collectPatternRangeBindings(allocator, module, locals, or_pattern.patterns),
+        .wildcard, .int_literal, .float_literal, .string_literal, .char_literal, .bool_literal, .path, .unsupported => {},
+    }
+}
+
+fn collectPatternRangeBindings(
+    allocator: Allocator,
+    module: *const hir.Hir,
+    locals: *std.AutoHashMapUnmanaged(base.SymbolId, void),
+    patterns: base.Range,
+) Allocator.Error!void {
+    const start: usize = @intCast(patterns.start);
+    const end: usize = @intCast(patterns.end());
+    for (module.pattern_args.items[start..end]) |pattern| {
+        try collectPatternBindings(allocator, module, locals, pattern);
+    }
+}
+
+fn copyLocals(
+    allocator: Allocator,
+    locals: *const std.AutoHashMapUnmanaged(base.SymbolId, void),
+) Allocator.Error!std.AutoHashMapUnmanaged(base.SymbolId, void) {
+    var copy = std.AutoHashMapUnmanaged(base.SymbolId, void){};
+    errdefer copy.deinit(allocator);
+    var iterator = locals.iterator();
+    while (iterator.next()) |entry| {
+        try copy.put(allocator, entry.key_ptr.*, {});
+    }
+    return copy;
 }
 
 fn isPreludeName(interner: *const base.Interner, symbol: base.SymbolId) bool {
