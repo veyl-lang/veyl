@@ -96,6 +96,18 @@ fn writeStmt(
     indent: usize,
 ) std.Io.Writer.Error!void {
     switch (stmt) {
+        .let_stmt => |let_stmt| {
+            try writer.writeAll("let ");
+            try writePattern(writer, ast, interner, let_stmt.pattern);
+            try writer.writeAll(" = ");
+            try writeExpr(writer, ast, interner, let_stmt.value);
+            if (let_stmt.else_block) |else_block| {
+                try writer.writeAll(" else ");
+                try writeBlock(writer, ast, interner, ast.blocks.items[else_block], indent);
+            } else {
+                try writer.writeAll(";\n");
+            }
+        },
         .expr_stmt => |expr| {
             try writeExpr(writer, ast, interner, expr);
             try writer.writeAll(";\n");
@@ -111,9 +123,55 @@ fn writeStmt(
         .break_stmt => try writer.writeAll("break;\n"),
         .continue_stmt => try writer.writeAll("continue;\n"),
         else => {
-            _ = indent;
             try writer.writeAll("<stmt>;\n");
         },
+    }
+}
+
+fn writePattern(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    pattern_id: ast_mod.PatternId,
+) std.Io.Writer.Error!void {
+    switch (ast.patterns.items[pattern_id]) {
+        .wildcard => try writer.writeByte('_'),
+        .binding => |binding| {
+            if (binding.is_mut) try writer.writeAll("mut ");
+            try writer.writeAll(interner.get(binding.name) orelse "<missing>");
+        },
+        .path => |path| try writePath(writer, ast, interner, path.segments),
+        .tuple => |tuple| {
+            try writePath(writer, ast, interner, tuple.path);
+            try writer.writeByte('(');
+            const start: usize = @intCast(tuple.args.start);
+            const end: usize = @intCast(tuple.args.end());
+            for (ast.pattern_args.items[start..end], 0..) |arg, index| {
+                if (index != 0) try writer.writeAll(", ");
+                try writePattern(writer, ast, interner, arg);
+            }
+            try writer.writeByte(')');
+        },
+        .record => |record| {
+            try writePath(writer, ast, interner, record.path);
+            try writer.writeAll(" { ");
+            const start: usize = @intCast(record.fields.start);
+            const end: usize = @intCast(record.fields.end());
+            for (ast.pattern_record_fields.items[start..end], 0..) |field, index| {
+                if (index != 0) try writer.writeAll(", ");
+                try writer.writeAll(interner.get(field.name) orelse "<missing>");
+                if (field.pattern) |field_pattern| {
+                    try writer.writeAll(": ");
+                    try writePattern(writer, ast, interner, field_pattern);
+                }
+            }
+            if (record.has_rest) {
+                if (record.fields.len != 0) try writer.writeAll(", ");
+                try writer.writeAll("..");
+            }
+            try writer.writeAll(" }");
+        },
+        else => try writer.writeAll("<pattern>"),
     }
 }
 

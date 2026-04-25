@@ -1,0 +1,11 @@
+fn normalize(input: Value) -> Value {
+    let value = input;
+    let mut next = value;
+    return next;
+}
+fn require_token(request: Request) -> Result<Token, Error> {
+    let Some(token) = request.token() else {
+        return Err(Error.MissingToken);
+    }
+    token
+}
