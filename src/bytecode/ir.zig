@@ -15,6 +15,20 @@ pub const Op = enum {
     get_name,
     get_field,
     call,
+    add,
+    sub,
+    mul,
+    div,
+    rem,
+    equal,
+    not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    logical_and,
+    logical_or,
+    assign,
     pop,
     ret,
     unsupported,
@@ -136,6 +150,11 @@ fn compileExpr(bytecode: *BytecodeModule, module: *const hir.Hir, expr_id: hir.i
             try compileExpr(bytecode, module, field.base);
             try emit(bytecode, .get_field, field.name);
         },
+        .binary => |binary| {
+            try compileExpr(bytecode, module, binary.left);
+            try compileExpr(bytecode, module, binary.right);
+            try emit(bytecode, binaryOp(binary.op), 0);
+        },
         .call => |call| {
             try compileExpr(bytecode, module, call.callee);
             const start: usize = @intCast(call.args.start);
@@ -147,6 +166,25 @@ fn compileExpr(bytecode: *BytecodeModule, module: *const hir.Hir, expr_id: hir.i
         },
         else => try emit(bytecode, .unsupported, 0),
     }
+}
+
+fn binaryOp(op: hir.ir.BinaryOp) Op {
+    return switch (op) {
+        .add, .add_assign => .add,
+        .sub, .sub_assign => .sub,
+        .mul, .mul_assign => .mul,
+        .div, .div_assign => .div,
+        .rem, .rem_assign => .rem,
+        .equal => .equal,
+        .not_equal => .not_equal,
+        .less => .less,
+        .less_equal => .less_equal,
+        .greater => .greater,
+        .greater_equal => .greater_equal,
+        .logical_and => .logical_and,
+        .logical_or => .logical_or,
+        .assign => .assign,
+    };
 }
 
 fn emit(bytecode: *BytecodeModule, op: Op, operand: u32) Allocator.Error!void {
