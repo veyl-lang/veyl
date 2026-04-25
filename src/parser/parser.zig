@@ -61,6 +61,8 @@ const Parser = struct {
                 try self.parseImpl(visibility, start_span);
             } else if (self.peekKind() == .keyword_interface) {
                 try self.parseInterface(visibility, start_span);
+            } else if (visibility == .package and self.peekKind() == .keyword_test) {
+                try self.parseTest(start_span);
             } else if (self.peekKind() == .keyword_struct) {
                 try self.parseStruct(visibility, start_span);
             } else if (self.peekKind() == .keyword_enum) {
@@ -371,6 +373,17 @@ const Parser = struct {
             .params = .{ .start = self.tree.reserveFnParams(), .len = 0 },
             .span = span,
         };
+    }
+
+    fn parseTest(self: *Parser, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_test, "expected test declaration")) orelse return;
+        const name_token = (try self.expect(.string_literal, "expected test name string")) orelse return;
+        const body = try self.parseBlock();
+        _ = try self.tree.addDecl(.{ .test_decl = .{
+            .name_span = name_token.span,
+            .body = body,
+            .span = base.Span.join(start_span, self.tree.blocks.items[body].span),
+        } });
     }
 
     fn parseFnParam(self: *Parser) Allocator.Error!ast_mod.FnParam {

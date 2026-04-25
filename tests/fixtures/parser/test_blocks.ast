@@ -1,0 +1,29 @@
+Root
+  TestDecl
+    Block
+      LetStmt user
+        Call
+          Field new
+            Name User
+          StringLiteral
+          IntLiteral
+      LetStmt mut next
+        Name user
+      ExprStmt
+        Call
+          Field birthday
+            Name next
+      ExprStmt
+        Call
+          Name assert
+          Binary equal
+            Field age
+              Name user
+            IntLiteral
+      ExprStmt
+        Call
+          Name assert
+          Binary equal
+            Field age
+              Name next
+            IntLiteral

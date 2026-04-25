@@ -124,6 +124,12 @@ pub const InterfaceDecl = struct {
     span: base.Span,
 };
 
+pub const TestDecl = struct {
+    name_span: base.Span,
+    body: BlockId,
+    span: base.Span,
+};
+
 pub const BinaryOp = enum {
     assign,
     add_assign,
@@ -412,6 +418,7 @@ pub const Decl = union(enum) {
     fn_decl: FnDecl,
     impl_decl: ImplDecl,
     interface_decl: InterfaceDecl,
+    test_decl: TestDecl,
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
 
@@ -422,6 +429,7 @@ pub const Decl = union(enum) {
             .fn_decl => |decl| decl.span,
             .impl_decl => |decl| decl.span,
             .interface_decl => |decl| decl.span,
+            .test_decl => |decl| decl.span,
             .struct_decl => |decl| decl.span,
             .enum_decl => |decl| decl.span,
         };
@@ -678,6 +686,7 @@ pub fn dumpAst(allocator: Allocator, ast: *const Ast, interner: *const base.Inte
             .fn_decl => |fn_decl| try dumpFn(&output.writer, ast, interner, fn_decl),
             .impl_decl => |impl_decl| try dumpImpl(&output.writer, ast, interner, impl_decl),
             .interface_decl => |interface_decl| try dumpInterface(&output.writer, ast, interner, interface_decl),
+            .test_decl => |test_decl| try dumpTest(&output.writer, ast, interner, test_decl),
             .struct_decl => |struct_decl| try dumpStruct(&output.writer, ast, interner, struct_decl),
             .enum_decl => |enum_decl| try dumpEnum(&output.writer, ast, interner, enum_decl),
         }
@@ -1183,6 +1192,16 @@ fn dumpInterfaceMethod(
         try writer.writeAll("()");
     }
     try writer.writeByte('\n');
+}
+
+fn dumpTest(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    test_decl: TestDecl,
+) std.Io.Writer.Error!void {
+    try writer.writeAll("  TestDecl\n");
+    try dumpBlock(writer, ast, interner, ast.blocks.items[test_decl.body], 2);
 }
 
 fn dumpWherePredicates(

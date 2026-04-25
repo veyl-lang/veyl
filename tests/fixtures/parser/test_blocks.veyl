@@ -1,0 +1,9 @@
+test "birthday increments age" {
+    let user = User.new("Ada", 32);
+    let mut next = user;
+
+    next.birthday();
+
+    assert(user.age == 32);
+    assert(next.age == 33);
+}
