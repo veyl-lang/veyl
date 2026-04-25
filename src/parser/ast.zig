@@ -163,7 +163,7 @@ pub const Expr = union(enum) {
     unit_literal: base.Span,
     binary: struct { op: BinaryOp, left: ExprId, right: ExprId, span: base.Span },
     field: struct { base: ExprId, name: base.SymbolId, name_span: base.Span, span: base.Span },
-    call: struct { callee: ExprId, args: base.Range, span: base.Span },
+    call: struct { callee: ExprId, type_args: base.Range = .{ .start = 0, .len = 0 }, args: base.Range, span: base.Span },
     index: struct { base: ExprId, index: ExprId, span: base.Span },
     array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
@@ -899,6 +899,17 @@ fn dumpExpr(
         .call => |call| {
             try writer.writeAll("Call\n");
             try dumpExpr(writer, ast, interner, call.callee, indent + 1);
+            if (call.type_args.len != 0) {
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("TypeArgs");
+                const type_start: usize = @intCast(call.type_args.start);
+                const type_end: usize = @intCast(call.type_args.end());
+                for (ast.type_args.items[type_start..type_end]) |type_arg| {
+                    try writer.writeByte(' ');
+                    try dumpTypeExpr(writer, ast, interner, type_arg);
+                }
+                try writer.writeByte('\n');
+            }
             const start: usize = @intCast(call.args.start);
             const end: usize = @intCast(call.args.end());
             for (ast.call_args.items[start..end]) |arg| {

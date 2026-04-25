@@ -1,0 +1,19 @@
+Root
+  FnDecl package load
+    Param text: Str
+    Return Result<Config, ConfigError>
+    Block
+      FinalExpr
+        Call
+          Field decode
+            Name json
+          TypeArgs Config
+          Name text
+  FnDecl package make_map
+    Return Map<Str, User>
+    Block
+      FinalExpr
+        Call
+          Field new
+            Name Map
+          TypeArgs Str User

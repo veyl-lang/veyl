@@ -755,27 +755,12 @@ const Parser = struct {
                     .name_span = name_token.span,
                     .span = span,
                 } });
+            } else if (self.isGenericCallAhead()) {
+                const type_args = try self.parseCallTypeArgs();
+                _ = (try self.expect(.l_paren, "expected `(` after call type arguments")) orelse return expr;
+                expr = try self.finishCall(expr, type_args);
             } else if (self.match(.l_paren)) |_| {
-                const args_start = self.tree.reserveCallArgs();
-                var args_len: u32 = 0;
-                var end_span = self.tree.exprs.items[expr].span();
-                while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
-                    const arg = try self.parseCallArg();
-                    try self.tree.addCallArg(arg);
-                    args_len += 1;
-                    end_span = arg.span;
-                    if (self.match(.comma) == null) break;
-                }
-                if (self.match(.r_paren)) |paren| {
-                    end_span = paren.span;
-                } else {
-                    try self.addError(self.peek().span, "expected `)` after call arguments");
-                }
-                expr = try self.tree.addExpr(.{ .call = .{
-                    .callee = expr,
-                    .args = .{ .start = args_start, .len = args_len },
-                    .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
-                } });
+                expr = try self.finishCall(expr, .{ .start = 0, .len = 0 });
             } else if (self.match(.l_bracket)) |_| {
                 const index_expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
                 var end_span = self.tree.exprs.items[index_expr].span();
@@ -829,6 +814,63 @@ const Parser = struct {
         }
 
         return expr;
+    }
+
+    fn finishCall(self: *Parser, callee: ast_mod.ExprId, type_args: base.Range) Allocator.Error!ast_mod.ExprId {
+        const args_start = self.tree.reserveCallArgs();
+        var args_len: u32 = 0;
+        var end_span = self.tree.exprs.items[callee].span();
+        while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
+            const arg = try self.parseCallArg();
+            try self.tree.addCallArg(arg);
+            args_len += 1;
+            end_span = arg.span;
+            if (self.match(.comma) == null) break;
+        }
+        if (self.match(.r_paren)) |paren| {
+            end_span = paren.span;
+        } else {
+            try self.addError(self.peek().span, "expected `)` after call arguments");
+        }
+        return self.tree.addExpr(.{ .call = .{
+            .callee = callee,
+            .type_args = type_args,
+            .args = .{ .start = args_start, .len = args_len },
+            .span = base.Span.join(self.tree.exprs.items[callee].span(), end_span),
+        } });
+    }
+
+    fn parseCallTypeArgs(self: *Parser) Allocator.Error!base.Range {
+        _ = (try self.expect(.less, "expected `<` before call type arguments")) orelse return .{ .start = 0, .len = 0 };
+        const args_start = self.tree.reserveTypeArgs();
+        var args_len: u32 = 0;
+        while (self.peekKind() != .greater and self.peekKind() != .eof) {
+            const arg = try self.parseTypeExpr("expected call type argument");
+            try self.tree.addTypeArg(arg);
+            args_len += 1;
+            if (self.match(.comma) == null) break;
+        }
+        _ = try self.expect(.greater, "expected `>` after call type arguments");
+        return .{ .start = args_start, .len = args_len };
+    }
+
+    fn isGenericCallAhead(self: *const Parser) bool {
+        if (self.peekKind() != .less) return false;
+        var index = self.index;
+        var depth: usize = 0;
+        while (index < self.tokens.len) : (index += 1) {
+            switch (self.tokens[index].kind) {
+                .less => depth += 1,
+                .greater => {
+                    if (depth == 0) return false;
+                    depth -= 1;
+                    if (depth == 0) return index + 1 < self.tokens.len and self.tokens[index + 1].kind == .l_paren;
+                },
+                .eof => return false,
+                else => {},
+            }
+        }
+        return false;
     }
 
     fn parseCallArg(self: *Parser) Allocator.Error!ast_mod.CallArg {

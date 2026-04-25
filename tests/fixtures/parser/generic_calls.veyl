@@ -1,0 +1,7 @@
+fn load(text: Str) -> Result<Config, ConfigError> {
+    json.decode<Config>(text)
+}
+
+fn make_map() -> Map<Str, User> {
+    Map.new<Str, User>()
+}
