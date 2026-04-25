@@ -193,6 +193,24 @@ const Parser = struct {
                 const stmt = try self.parseReturnStmt();
                 try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .return_stmt = stmt }));
                 end_span = stmt.span;
+            } else if (self.peekKind() == .keyword_while) {
+                const stmt = try self.parseWhileStmt();
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .while_stmt = stmt }));
+                end_span = stmt.span;
+            } else if (self.peekKind() == .keyword_defer) {
+                const stmt = try self.parseDeferStmt();
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .defer_stmt = stmt }));
+                end_span = stmt.span;
+            } else if (self.peekKind() == .keyword_break) {
+                const token = self.advance();
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .break_stmt = token.span }));
+                end_span = token.span;
+                _ = self.match(.semicolon);
+            } else if (self.peekKind() == .keyword_continue) {
+                const token = self.advance();
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .continue_stmt = token.span }));
+                end_span = token.span;
+                _ = self.match(.semicolon);
             } else {
                 const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
                 end_span = self.tree.exprs.items[expr].span();
@@ -268,6 +286,37 @@ const Parser = struct {
             end_span = semicolon.span;
         }
         return .{ .value = value, .span = base.Span.join(return_token.span, end_span) };
+    }
+
+    fn parseWhileStmt(self: *Parser) Allocator.Error!ast_mod.WhileStmt {
+        const while_token = (try self.expect(.keyword_while, "expected while statement")) orelse return error.OutOfMemory;
+        const old_allow_struct_literal = self.allow_struct_literal;
+        self.allow_struct_literal = false;
+        defer self.allow_struct_literal = old_allow_struct_literal;
+        const condition = try self.parseExpression(@intFromEnum(Precedence.lowest));
+
+        const body = try self.parseBlock();
+        return .{
+            .condition = condition,
+            .body = body,
+            .span = base.Span.join(while_token.span, self.tree.blocks.items[body].span),
+        };
+    }
+
+    fn parseDeferStmt(self: *Parser) Allocator.Error!ast_mod.DeferStmt {
+        const defer_token = (try self.expect(.keyword_defer, "expected defer statement")) orelse return error.OutOfMemory;
+        var kind: ast_mod.DeferKind = .always;
+        if (self.peekKind() == .identifier and std.mem.eql(u8, self.tokenText(self.peek()), "err")) {
+            _ = self.advance();
+            kind = .err;
+        }
+
+        const body = try self.parseBlock();
+        return .{
+            .kind = kind,
+            .body = body,
+            .span = base.Span.join(defer_token.span, self.tree.blocks.items[body].span),
+        };
     }
 
     const Precedence = enum(u8) {
@@ -709,9 +758,13 @@ const Parser = struct {
     }
 
     fn internToken(self: *Parser, token: lexer.Token) Allocator.Error!base.SymbolId {
+        return self.interner.intern(self.tokenText(token));
+    }
+
+    fn tokenText(self: *Parser, token: lexer.Token) []const u8 {
         const start: usize = token.span.start;
         const end: usize = token.span.end();
-        return self.interner.intern(self.source[start..end]);
+        return self.source[start..end];
     }
 
     fn addError(self: *Parser, span: base.Span, message: []const u8) Allocator.Error!void {

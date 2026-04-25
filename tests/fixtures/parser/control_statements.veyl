@@ -1,0 +1,19 @@
+fn loop_example(mut count: Int) {
+    defer {
+        cleanup();
+    }
+
+    defer err {
+        rollback();
+    }
+
+    while count < 10 {
+        count += 1;
+        if count == 3 {
+            continue;
+        };
+        if count == 8 {
+            break;
+        };
+    }
+}

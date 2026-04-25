@@ -126,9 +126,30 @@ pub const ReturnStmt = struct {
     span: base.Span,
 };
 
+pub const WhileStmt = struct {
+    condition: ExprId,
+    body: BlockId,
+    span: base.Span,
+};
+
+pub const DeferKind = enum {
+    always,
+    err,
+};
+
+pub const DeferStmt = struct {
+    kind: DeferKind,
+    body: BlockId,
+    span: base.Span,
+};
+
 pub const Stmt = union(enum) {
     let_stmt: LetStmt,
     return_stmt: ReturnStmt,
+    while_stmt: WhileStmt,
+    defer_stmt: DeferStmt,
+    break_stmt: base.Span,
+    continue_stmt: base.Span,
     expr_stmt: ExprId,
 };
 
@@ -429,6 +450,27 @@ fn dumpStmt(
             if (return_stmt.value) |value| {
                 try dumpExpr(writer, ast, interner, value, indent + 1);
             }
+        },
+        .while_stmt => |while_stmt| {
+            try writeIndent(writer, indent);
+            try writer.writeAll("WhileStmt\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Condition\n");
+            try dumpExpr(writer, ast, interner, while_stmt.condition, indent + 2);
+            try dumpBlock(writer, ast, interner, ast.blocks.items[while_stmt.body], indent + 1);
+        },
+        .defer_stmt => |defer_stmt| {
+            try writeIndent(writer, indent);
+            try writer.print("DeferStmt {s}\n", .{@tagName(defer_stmt.kind)});
+            try dumpBlock(writer, ast, interner, ast.blocks.items[defer_stmt.body], indent + 1);
+        },
+        .break_stmt => {
+            try writeIndent(writer, indent);
+            try writer.writeAll("BreakStmt\n");
+        },
+        .continue_stmt => {
+            try writeIndent(writer, indent);
+            try writer.writeAll("ContinueStmt\n");
         },
         .expr_stmt => |expr| {
             try writeIndent(writer, indent);

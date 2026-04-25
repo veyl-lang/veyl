@@ -1,0 +1,43 @@
+Root
+  FnDecl package loop_example
+    Param mut count: Int
+    Return ()
+    Block
+      DeferStmt always
+        Block
+          ExprStmt
+            Call
+              Name cleanup
+      DeferStmt err
+        Block
+          ExprStmt
+            Call
+              Name rollback
+      WhileStmt
+        Condition
+          Binary less
+            Name count
+            IntLiteral
+        Block
+          ExprStmt
+            Binary add_assign
+              Name count
+              IntLiteral
+          ExprStmt
+            IfExpr
+              Condition
+                Binary equal
+                  Name count
+                  IntLiteral
+              Then
+                Block
+                  ContinueStmt
+          ExprStmt
+            IfExpr
+              Condition
+                Binary equal
+                  Name count
+                  IntLiteral
+              Then
+                Block
+                  BreakStmt
