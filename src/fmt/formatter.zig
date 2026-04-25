@@ -13,6 +13,7 @@ pub fn formatAst(allocator: Allocator, ast: *const ast_mod.Ast, interner: *const
         switch (decl) {
             .import => |import_decl| try formatImport(&output.writer, ast, interner, import_decl),
             .type_alias => |type_alias| try formatTypeAlias(&output.writer, ast, interner, type_alias),
+            .fn_decl => |fn_decl| try formatFn(&output.writer, ast, interner, fn_decl),
             .struct_decl => |struct_decl| try formatStruct(&output.writer, ast, interner, struct_decl),
             .enum_decl => |enum_decl| try formatEnum(&output.writer, ast, interner, enum_decl),
             else => {},
@@ -20,6 +21,179 @@ pub fn formatAst(allocator: Allocator, ast: *const ast_mod.Ast, interner: *const
     }
 
     return output.toOwnedSlice();
+}
+
+fn formatFn(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    fn_decl: ast_mod.FnDecl,
+) std.Io.Writer.Error!void {
+    try writeVisibility(writer, fn_decl.visibility);
+    try writer.writeAll("fn ");
+    try writer.writeAll(interner.get(fn_decl.name) orelse "<missing>");
+    try writeGenericParams(writer, ast, interner, fn_decl.generic_params);
+    try writeFnParams(writer, ast, interner, fn_decl.params);
+    if (fn_decl.return_type) |return_type| {
+        try writer.writeAll(" -> ");
+        try writeTypeExpr(writer, ast, interner, return_type);
+    }
+    try writer.writeByte(' ');
+    try writeBlock(writer, ast, interner, ast.blocks.items[fn_decl.body], 0);
+}
+
+fn writeFnParams(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    params: base.Range,
+) std.Io.Writer.Error!void {
+    try writer.writeByte('(');
+    const start: usize = @intCast(params.start);
+    const end: usize = @intCast(params.end());
+    for (ast.fn_params.items[start..end], 0..) |param, index| {
+        if (index != 0) try writer.writeAll(", ");
+        if (param.is_mut) try writer.writeAll("mut ");
+        try writer.writeAll(interner.get(param.name) orelse "<missing>");
+        try writer.writeAll(": ");
+        try writeTypeExpr(writer, ast, interner, param.type_expr);
+        if (param.default_value) |default_value| {
+            try writer.writeAll(" = ");
+            try writeExpr(writer, ast, interner, default_value);
+        }
+    }
+    try writer.writeByte(')');
+}
+
+fn writeBlock(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    block: ast_mod.Block,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writer.writeAll("{\n");
+    const start: usize = @intCast(block.stmts.start);
+    const end: usize = @intCast(block.stmts.end());
+    for (ast.block_stmt_ids.items[start..end]) |stmt_id| {
+        try writeIndent(writer, indent + 1);
+        try writeStmt(writer, ast, interner, ast.stmts.items[stmt_id], indent + 1);
+    }
+    if (block.final_expr) |final_expr| {
+        try writeIndent(writer, indent + 1);
+        try writeExpr(writer, ast, interner, final_expr);
+        try writer.writeByte('\n');
+    }
+    try writeIndent(writer, indent);
+    try writer.writeAll("}\n");
+}
+
+fn writeStmt(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    stmt: ast_mod.Stmt,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    switch (stmt) {
+        .expr_stmt => |expr| {
+            try writeExpr(writer, ast, interner, expr);
+            try writer.writeAll(";\n");
+        },
+        .return_stmt => |return_stmt| {
+            try writer.writeAll("return");
+            if (return_stmt.value) |value| {
+                try writer.writeByte(' ');
+                try writeExpr(writer, ast, interner, value);
+            }
+            try writer.writeAll(";\n");
+        },
+        .break_stmt => try writer.writeAll("break;\n"),
+        .continue_stmt => try writer.writeAll("continue;\n"),
+        else => {
+            _ = indent;
+            try writer.writeAll("<stmt>;\n");
+        },
+    }
+}
+
+fn writeExpr(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    expr_id: ast_mod.ExprId,
+) std.Io.Writer.Error!void {
+    switch (ast.exprs.items[expr_id]) {
+        .name => |name| try writer.writeAll(interner.get(name.symbol) orelse "<missing>"),
+        .unit_literal => try writer.writeAll("()"),
+        .field => |field| {
+            try writeExpr(writer, ast, interner, field.base);
+            try writer.writeByte('.');
+            try writer.writeAll(interner.get(field.name) orelse "<missing>");
+        },
+        .call => |call| {
+            try writeExpr(writer, ast, interner, call.callee);
+            if (call.type_args.len != 0) {
+                try writer.writeByte('<');
+                const type_start: usize = @intCast(call.type_args.start);
+                const type_end: usize = @intCast(call.type_args.end());
+                for (ast.type_args.items[type_start..type_end], 0..) |type_arg, index| {
+                    if (index != 0) try writer.writeAll(", ");
+                    try writeTypeExpr(writer, ast, interner, type_arg);
+                }
+                try writer.writeByte('>');
+            }
+            try writer.writeByte('(');
+            const arg_start: usize = @intCast(call.args.start);
+            const arg_end: usize = @intCast(call.args.end());
+            for (ast.call_args.items[arg_start..arg_end], 0..) |arg, index| {
+                if (index != 0) try writer.writeAll(", ");
+                if (arg.name) |name| {
+                    try writer.writeAll(interner.get(name) orelse "<missing>");
+                    try writer.writeAll(": ");
+                }
+                try writeExpr(writer, ast, interner, arg.value);
+            }
+            try writer.writeByte(')');
+        },
+        .binary => |binary| {
+            try writeExpr(writer, ast, interner, binary.left);
+            try writer.print(" {s} ", .{binaryOpText(binary.op)});
+            try writeExpr(writer, ast, interner, binary.right);
+        },
+        else => try writer.writeAll("<expr>"),
+    }
+}
+
+fn binaryOpText(op: ast_mod.BinaryOp) []const u8 {
+    return switch (op) {
+        .assign => "=",
+        .add_assign => "+=",
+        .sub_assign => "-=",
+        .mul_assign => "*=",
+        .div_assign => "/=",
+        .rem_assign => "%=",
+        .logical_or => "||",
+        .logical_and => "&&",
+        .equal => "==",
+        .not_equal => "!=",
+        .less => "<",
+        .less_equal => "<=",
+        .greater => ">",
+        .greater_equal => ">=",
+        .add => "+",
+        .sub => "-",
+        .mul => "*",
+        .div => "/",
+        .rem => "%",
+    };
+}
+
+fn writeIndent(writer: *std.Io.Writer, indent: usize) std.Io.Writer.Error!void {
+    var i: usize = 0;
+    while (i < indent) : (i += 1) {
+        try writer.writeAll("    ");
+    }
 }
 
 fn formatStruct(

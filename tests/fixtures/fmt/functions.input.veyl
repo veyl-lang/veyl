@@ -1,0 +1,9 @@
+pub fn identity<T>(value: T) -> T {
+    value
+}
+fn add(a: Int, b: Int) -> Int {
+    a + b
+}
+fn log_done() {
+    print_done();
+}
