@@ -108,7 +108,7 @@ pub const MatchArm = struct {
 };
 
 pub const Stmt = union(enum) {
-    let_stmt: struct { name: ?base.SymbolId, value: ExprId, span: base.Span },
+    let_stmt: struct { name: ?base.SymbolId, value: ExprId, else_block: ?BlockId, span: base.Span },
     return_stmt: struct { value: ?ExprId, span: base.Span },
     while_stmt: struct { condition: ExprId, body: BlockId, span: base.Span },
     for_stmt: struct { name: ?base.SymbolId, iterable: ExprId, body: BlockId, span: base.Span },
@@ -278,6 +278,7 @@ fn lowerStmt(hir: *Hir, ast: *const parser.Ast, stmt: parser.Stmt) Allocator.Err
         .let_stmt => |let_stmt| .{ .let_stmt = .{
             .name = bindingName(ast, let_stmt.pattern),
             .value = try lowerExpr(hir, ast, let_stmt.value),
+            .else_block = if (let_stmt.else_block) |else_block| try lowerBlock(hir, ast, else_block) else null,
             .span = let_stmt.span,
         } },
         .return_stmt => |return_stmt| .{ .return_stmt = .{
@@ -590,6 +591,11 @@ fn dumpStmt(
                 try writer.writeAll("LetPattern\n");
             }
             try dumpExpr(writer, hir, interner, let_stmt.value, indent + 1);
+            if (let_stmt.else_block) |else_block| {
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("Else\n");
+                try dumpBlock(writer, hir, interner, else_block, indent + 2);
+            }
         },
         .return_stmt => |return_stmt| {
             try writeIndent(writer, indent);

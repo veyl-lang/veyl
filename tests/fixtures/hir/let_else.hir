@@ -1,0 +1,14 @@
+HirRoot
+  Function package require params=1
+    Block
+      LetPattern
+        Name maybe
+        Else
+          Block
+            Return
+              Call
+                Name Err
+                Field Missing
+                  Name Error
+      FinalExpr
+        Name token

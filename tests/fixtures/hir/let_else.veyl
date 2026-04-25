@@ -1,0 +1,6 @@
+fn require(maybe: Option<Token>) -> Result<Token, Error> {
+    let Some(token) = maybe else {
+        return Err(Error.Missing);
+    }
+    token
+}
