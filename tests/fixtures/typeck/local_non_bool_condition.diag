@@ -1,0 +1,5 @@
+error: condition must be Bool
+  --> local_non_bool_condition.veyl:3:8
+   |
+  3 |     if value {
+   |        ^^^^^
