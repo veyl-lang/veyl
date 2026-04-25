@@ -36,6 +36,10 @@ pub const Vm = struct {
     }
 
     fn runFunction(self: *Vm, module: *const bytecode.BytecodeModule, function: bytecode.Function) VmError!Value {
+        const locals = try self.allocator.alloc(Value, function.local_count);
+        defer self.allocator.free(locals);
+        for (locals) |*local| local.* = .unit;
+
         const start: usize = @intCast(function.code.start);
         const end: usize = @intCast(function.code.end());
         var ip = start;
@@ -45,6 +49,8 @@ pub const Vm = struct {
                 .unit => try self.stack.append(self.allocator, .unit),
                 .constant_int => try self.stack.append(self.allocator, .{ .int = module.int_constants.items[instruction.operand] }),
                 .constant_bool => try self.stack.append(self.allocator, .{ .bool = instruction.operand != 0 }),
+                .load_local => try self.stack.append(self.allocator, locals[instruction.operand]),
+                .store_local => locals[instruction.operand] = try self.pop(),
                 .add => try self.binaryInt(.add),
                 .sub => try self.binaryInt(.sub),
                 .mul => try self.binaryInt(.mul),
