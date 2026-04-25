@@ -197,6 +197,16 @@ fn compileStmt(context: *CompileContext, stmt: hir.ir.Stmt) CompileError!bool {
             try emit(bytecode, .pop, 0);
             return false;
         },
+        .while_stmt => |while_stmt| {
+            const loop_start = bytecode.instructions.items.len;
+            try compileControlCondition(context, while_stmt.condition);
+            const jump_to_end = bytecode.instructions.items.len;
+            try emit(bytecode, .jump_if_false, 0);
+            try compileBlock(context, while_stmt.body, false);
+            try emit(bytecode, .jump, @intCast(loop_start));
+            bytecode.instructions.items[jump_to_end].operand = @intCast(bytecode.instructions.items.len);
+            return false;
+        },
         else => {
             try emit(bytecode, .unsupported, 0);
             return false;

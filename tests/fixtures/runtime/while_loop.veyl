@@ -1,0 +1,7 @@
+fn main() -> Int {
+    let mut value = 39;
+    while value < 42 {
+        value = value + 1;
+    }
+    value
+}
