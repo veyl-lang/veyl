@@ -90,6 +90,8 @@ pub const Expr = union(enum) {
     array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
     if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
+    try_expr: TryExpr,
+    catch_expr: CatchExpr,
 
     pub fn span(self: Expr) base.Span {
         return switch (self) {
@@ -106,6 +108,8 @@ pub const Expr = union(enum) {
             .array_literal => |expr| expr.span,
             .struct_literal => |expr| expr.span,
             .if_expr => |expr| expr.span,
+            .try_expr => |expr| expr.span,
+            .catch_expr => |expr| expr.span,
         };
     }
 };
@@ -114,6 +118,35 @@ pub const StructLiteralField = struct {
     name: base.SymbolId,
     name_span: base.Span,
     value: ?ExprId = null,
+    span: base.Span,
+};
+
+pub const TryExpr = struct {
+    value: ExprId,
+    span: base.Span,
+};
+
+pub const CatchBinding = struct {
+    name: base.SymbolId,
+    span: base.Span,
+};
+
+pub const CatchHandler = union(enum) {
+    expr: ExprId,
+    block: BlockId,
+
+    pub fn span(self: CatchHandler, ast: *const Ast) base.Span {
+        return switch (self) {
+            .expr => |expr_id| ast.exprs.items[expr_id].span(),
+            .block => |block_id| ast.blocks.items[block_id].span,
+        };
+    }
+};
+
+pub const CatchExpr = struct {
+    value: ExprId,
+    binding: ?CatchBinding = null,
+    handler: CatchHandler,
     span: base.Span,
 };
 
@@ -556,6 +589,26 @@ fn dumpExpr(
                 try writeIndent(writer, indent + 1);
                 try writer.writeAll("Else\n");
                 try dumpBlock(writer, ast, interner, ast.blocks.items[else_block], indent + 2);
+            }
+        },
+        .try_expr => |try_expr| {
+            try writer.writeAll("TryExpr\n");
+            try dumpExpr(writer, ast, interner, try_expr.value, indent + 1);
+        },
+        .catch_expr => |catch_expr| {
+            try writer.writeAll("CatchExpr\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Value\n");
+            try dumpExpr(writer, ast, interner, catch_expr.value, indent + 2);
+            if (catch_expr.binding) |binding| {
+                try writeIndent(writer, indent + 1);
+                try writer.print("Binding {s}\n", .{interner.get(binding.name) orelse "<missing>"});
+            }
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Handler\n");
+            switch (catch_expr.handler) {
+                .expr => |handler_expr| try dumpExpr(writer, ast, interner, handler_expr, indent + 2),
+                .block => |block_id| try dumpBlock(writer, ast, interner, ast.blocks.items[block_id], indent + 2),
             }
         },
     }

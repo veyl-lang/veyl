@@ -322,18 +322,27 @@ const Parser = struct {
     const Precedence = enum(u8) {
         lowest = 0,
         assignment = 1,
-        logical_or = 2,
-        logical_and = 3,
-        equality = 4,
-        comparison = 5,
-        term = 6,
-        factor = 7,
+        catch_expr = 2,
+        logical_or = 3,
+        logical_and = 4,
+        equality = 5,
+        comparison = 6,
+        term = 7,
+        factor = 8,
     };
 
     fn parseExpression(self: *Parser, min_precedence: u8) Allocator.Error!ast_mod.ExprId {
         var left = try self.parsePostfix();
 
-        while (binaryOp(self.peekKind())) |op_info| {
+        while (true) {
+            if (self.peekKind() == .keyword_catch) {
+                if (@intFromEnum(Precedence.catch_expr) < min_precedence) break;
+                _ = self.advance();
+                left = try self.parseCatchExpr(left);
+                continue;
+            }
+
+            const op_info = binaryOp(self.peekKind()) orelse break;
             if (@intFromEnum(op_info.precedence) < min_precedence) break;
             _ = self.advance();
 
@@ -353,6 +362,37 @@ const Parser = struct {
         }
 
         return left;
+    }
+
+    fn parseCatchExpr(self: *Parser, value: ast_mod.ExprId) Allocator.Error!ast_mod.ExprId {
+        var binding: ?ast_mod.CatchBinding = null;
+        if (self.match(.pipe)) |open_pipe| {
+            const binding_token = (try self.expectIdentifier("expected catch binding name")) orelse return value;
+            var binding_span = binding_token.span;
+            if (self.match(.pipe)) |close_pipe| {
+                binding_span = base.Span.join(open_pipe.span, close_pipe.span);
+            } else {
+                try self.addError(self.peek().span, "expected `|` after catch binding");
+            }
+            binding = .{
+                .name = try self.internToken(binding_token),
+                .span = binding_span,
+            };
+        }
+
+        const handler: ast_mod.CatchHandler = if (self.peekKind() == .l_brace) handler: {
+            break :handler .{ .block = try self.parseBlock() };
+        } else handler: {
+            break :handler .{ .expr = try self.parseExpression(nextPrecedence(.catch_expr)) };
+        };
+
+        const span = base.Span.join(self.tree.exprs.items[value].span(), handler.span(&self.tree));
+        return self.tree.addExpr(.{ .catch_expr = .{
+            .value = value,
+            .binding = binding,
+            .handler = handler,
+            .span = span,
+        } });
     }
 
     fn parsePostfix(self: *Parser) Allocator.Error!ast_mod.ExprId {
@@ -458,6 +498,7 @@ const Parser = struct {
             .keyword_true => return self.tree.addExpr(.{ .bool_literal = .{ .value = true, .span = token.span } }),
             .keyword_false => return self.tree.addExpr(.{ .bool_literal = .{ .value = false, .span = token.span } }),
             .keyword_if => return self.parseIfExpr(token.span),
+            .keyword_try => return self.parseTryExpr(token.span),
             .l_bracket => return self.parseArrayLiteral(token.span),
             .l_paren => {
                 const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
@@ -472,6 +513,14 @@ const Parser = struct {
                 } });
             },
         }
+    }
+
+    fn parseTryExpr(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {
+        const value = try self.parseExpression(nextPrecedence(.factor));
+        return self.tree.addExpr(.{ .try_expr = .{
+            .value = value,
+            .span = base.Span.join(start_span, self.tree.exprs.items[value].span()),
+        } });
     }
 
     fn parseArrayLiteral(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {

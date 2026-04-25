@@ -1,0 +1,35 @@
+Root
+  FnDecl package fallible
+    Return Int
+    Block
+      LetStmt value
+        TryExpr
+          Call
+            Name read
+      LetStmt recovered
+        CatchExpr
+          Value
+            Call
+              Name read
+          Handler
+            IntLiteral
+      LetStmt with_error
+        CatchExpr
+          Value
+            Call
+              Name read
+          Binding err
+          Handler
+            Block
+              ExprStmt
+                Call
+                  Name report
+                  Name err
+              FinalExpr
+                IntLiteral
+      FinalExpr
+        Binary add
+          Binary add
+            Name value
+            Name recovered
+          Name with_error

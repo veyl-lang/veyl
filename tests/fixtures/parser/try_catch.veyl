@@ -1,0 +1,9 @@
+fn fallible() -> Int {
+    let value = try read();
+    let recovered = read() catch 0;
+    let with_error = read() catch |err| {
+        report(err);
+        1
+    };
+    value + recovered + with_error
+}
