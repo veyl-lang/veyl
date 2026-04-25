@@ -1,0 +1,5 @@
+error: function argument type mismatch
+  --> function_argument_type_mismatch.veyl:6:25
+   |
+  6 |     let value = add_one(true);
+   |                         ^^^^
