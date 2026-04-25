@@ -6,4 +6,14 @@ HirRoot
   Interface package Reader
   Impl package methods=1
   Function package main params=0
+    Block
+      ExprStmt
+        Call
+          Name print
+          StringLiteral
   Test
+    Block
+      ExprStmt
+        Call
+          Name assert
+          BoolLiteral true
