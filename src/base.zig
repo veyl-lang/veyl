@@ -2,6 +2,7 @@ pub const ids = @import("base/ids.zig");
 pub const span = @import("base/span.zig");
 pub const source_map = @import("base/source_map.zig");
 pub const interner = @import("base/interner.zig");
+pub const range = @import("base/range.zig");
 
 pub const SourceId = ids.SourceId;
 pub const ModuleId = ids.ModuleId;
@@ -18,6 +19,7 @@ pub const LabelId = ids.LabelId;
 
 pub const Span = span.Span;
 pub const LineCol = span.LineCol;
+pub const Range = range.Range;
 pub const SourceMap = source_map.SourceMap;
 pub const SourceFile = source_map.SourceFile;
 pub const Interner = interner.Interner;
@@ -27,4 +29,5 @@ test {
     _ = span;
     _ = source_map;
     _ = interner;
+    _ = range;
 }
