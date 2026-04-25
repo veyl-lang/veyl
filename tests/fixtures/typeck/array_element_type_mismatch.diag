@@ -1,0 +1,5 @@
+error: array elements must have matching types
+  --> array_element_type_mismatch.veyl:2:22
+   |
+  2 |     let values = [1, true];
+   |                      ^^^^
