@@ -1,0 +1,65 @@
+default_install_hook_types:
+  - pre-commit
+  - pre-push
+  - commit-msg
+
+default_stages:
+  - pre-commit
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+
+  - repo: local
+    hooks:
+      - id: prettier-format
+        name: prettier format
+        entry: mise exec -- prettier --write --ignore-unknown
+        language: system
+        files: \.(md|yml|yaml)$
+
+      - id: zig-fmt
+        name: zig fmt
+        entry: mise exec -- zig fmt --ast-check
+        language: system
+        files: \.zig$
+
+      - id: zig-zon-fmt
+        name: zig fmt zon
+        entry: mise exec -- zig fmt --zon
+        language: system
+        files: \.zon$
+
+      - id: zig-build-check
+        name: zig build check
+        entry: bash -c 'test ! -f build.zig || mise exec -- zig build check'
+        language: system
+        files: ^(build\.zig|build\.zig\.zon|src/|tests/).*
+        pass_filenames: false
+
+      - id: zig-build-test
+        name: zig build test
+        entry: bash -c 'test ! -f build.zig || mise exec -- zig build test'
+        language: system
+        files: ^(build\.zig|build\.zig\.zon|src/|tests/).*
+        pass_filenames: false
+        stages:
+          - pre-push
+
+  - repo: local
+    hooks:
+      - id: commitlint
+        name: commitlint
+        entry: commitlint --edit
+        language: node
+        additional_dependencies:
+          - "@commitlint/cli@20.1.0"
+          - "@commitlint/config-conventional@20.0.0"
+        stages:
+          - commit-msg
+        pass_filenames: true
+        always_run: true
