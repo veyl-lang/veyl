@@ -6,6 +6,7 @@ const DumpError = Allocator.Error || std.Io.Writer.Error;
 
 pub const DeclId = base.DeclId;
 pub const BlockId = u32;
+pub const ExprId = base.ExprId;
 
 pub const Visibility = enum {
     package,
@@ -52,32 +53,76 @@ pub const FnDecl = struct {
     span: base.Span,
 };
 
-pub const RawExpr = struct {
-    span: base.Span,
+pub const BinaryOp = enum {
+    assign,
+    add_assign,
+    sub_assign,
+    mul_assign,
+    div_assign,
+    rem_assign,
+    logical_or,
+    logical_and,
+    equal,
+    not_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    add,
+    sub,
+    mul,
+    div,
+    rem,
+};
+
+pub const Expr = union(enum) {
+    name: struct { symbol: base.SymbolId, span: base.Span },
+    int_literal: base.Span,
+    float_literal: base.Span,
+    string_literal: base.Span,
+    char_literal: base.Span,
+    bool_literal: struct { value: bool, span: base.Span },
+    binary: struct { op: BinaryOp, left: ExprId, right: ExprId, span: base.Span },
+    field: struct { base: ExprId, name: base.SymbolId, name_span: base.Span, span: base.Span },
+    call: struct { callee: ExprId, args: base.Range, span: base.Span },
+
+    pub fn span(self: Expr) base.Span {
+        return switch (self) {
+            .name => |expr| expr.span,
+            .int_literal => |span_value| span_value,
+            .float_literal => |span_value| span_value,
+            .string_literal => |span_value| span_value,
+            .char_literal => |span_value| span_value,
+            .bool_literal => |expr| expr.span,
+            .binary => |expr| expr.span,
+            .field => |expr| expr.span,
+            .call => |expr| expr.span,
+        };
+    }
 };
 
 pub const LetStmt = struct {
     is_mut: bool,
     name: base.SymbolId,
     name_span: base.Span,
-    value: RawExpr,
+    value: ExprId,
     span: base.Span,
 };
 
 pub const ReturnStmt = struct {
-    value: ?RawExpr,
+    value: ?ExprId,
     span: base.Span,
 };
 
 pub const Stmt = union(enum) {
     let_stmt: LetStmt,
     return_stmt: ReturnStmt,
-    expr_stmt: RawExpr,
+    expr_stmt: ExprId,
 };
 
 pub const Block = struct {
     stmts: base.Range,
-    final_expr: ?RawExpr = null,
+    final_expr: ?ExprId = null,
     span: base.Span,
 };
 
@@ -150,6 +195,8 @@ pub const Ast = struct {
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
     fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
+    exprs: std.ArrayListUnmanaged(Expr) = .empty,
+    expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
     struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
@@ -167,6 +214,8 @@ pub const Ast = struct {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
         self.fn_params.deinit(self.allocator);
+        self.exprs.deinit(self.allocator);
+        self.expr_args.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
         self.struct_fields.deinit(self.allocator);
@@ -199,6 +248,20 @@ pub const Ast = struct {
 
     pub fn addFnParam(self: *Ast, param: FnParam) Allocator.Error!void {
         try self.fn_params.append(self.allocator, param);
+    }
+
+    pub fn addExpr(self: *Ast, expr: Expr) Allocator.Error!ExprId {
+        const id: ExprId = @intCast(self.exprs.items.len);
+        try self.exprs.append(self.allocator, expr);
+        return id;
+    }
+
+    pub fn reserveExprArgs(self: *const Ast) u32 {
+        return @intCast(self.expr_args.items.len);
+    }
+
+    pub fn addExprArg(self: *Ast, expr: ExprId) Allocator.Error!void {
+        try self.expr_args.append(self.allocator, expr);
     }
 
     pub fn reserveStmts(self: *const Ast) u32 {
@@ -303,9 +366,10 @@ fn dumpBlock(
         try dumpStmt(writer, ast, interner, stmt, indent + 1);
     }
 
-    if (block.final_expr != null) {
+    if (block.final_expr) |final_expr| {
         try writeIndent(writer, indent + 1);
         try writer.writeAll("FinalExpr\n");
+        try dumpExpr(writer, ast, interner, final_expr, indent + 2);
     }
 }
 
@@ -323,17 +387,58 @@ fn dumpStmt(
                 if (let_stmt.is_mut) "mut " else "",
                 interner.get(let_stmt.name) orelse "<missing>",
             });
+            try dumpExpr(writer, ast, interner, let_stmt.value, indent + 1);
         },
-        .return_stmt => {
+        .return_stmt => |return_stmt| {
             try writeIndent(writer, indent);
             try writer.writeAll("ReturnStmt\n");
+            if (return_stmt.value) |value| {
+                try dumpExpr(writer, ast, interner, value, indent + 1);
+            }
         },
-        .expr_stmt => {
+        .expr_stmt => |expr| {
             try writeIndent(writer, indent);
             try writer.writeAll("ExprStmt\n");
+            try dumpExpr(writer, ast, interner, expr, indent + 1);
         },
     }
-    _ = ast;
+}
+
+fn dumpExpr(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    expr_id: ExprId,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    const expr = ast.exprs.items[expr_id];
+    try writeIndent(writer, indent);
+    switch (expr) {
+        .name => |name| try writer.print("Name {s}\n", .{interner.get(name.symbol) orelse "<missing>"}),
+        .int_literal => try writer.writeAll("IntLiteral\n"),
+        .float_literal => try writer.writeAll("FloatLiteral\n"),
+        .string_literal => try writer.writeAll("StringLiteral\n"),
+        .char_literal => try writer.writeAll("CharLiteral\n"),
+        .bool_literal => |bool_expr| try writer.print("BoolLiteral {}\n", .{bool_expr.value}),
+        .binary => |binary| {
+            try writer.print("Binary {s}\n", .{@tagName(binary.op)});
+            try dumpExpr(writer, ast, interner, binary.left, indent + 1);
+            try dumpExpr(writer, ast, interner, binary.right, indent + 1);
+        },
+        .field => |field| {
+            try writer.print("Field {s}\n", .{interner.get(field.name) orelse "<missing>"});
+            try dumpExpr(writer, ast, interner, field.base, indent + 1);
+        },
+        .call => |call| {
+            try writer.writeAll("Call\n");
+            try dumpExpr(writer, ast, interner, call.callee, indent + 1);
+            const start: usize = @intCast(call.args.start);
+            const end: usize = @intCast(call.args.end());
+            for (ast.expr_args.items[start..end]) |arg| {
+                try dumpExpr(writer, ast, interner, arg, indent + 1);
+            }
+        },
+    }
 }
 
 fn writeIndent(writer: *std.Io.Writer, indent: usize) std.Io.Writer.Error!void {
@@ -516,6 +621,10 @@ test "AST dump renders function declarations" {
         .span = .{ .source = 0, .start = 12, .len = 14 },
     });
 
+    _ = try tree.addExpr(.{ .name = .{
+        .symbol = try interner.intern("user"),
+        .span = .{ .source = 0, .start = 38, .len = 4 },
+    } });
     const stmts_start = tree.reserveStmts();
     const body = try tree.addBlock(.{
         .stmts = .{ .start = stmts_start, .len = 0 },

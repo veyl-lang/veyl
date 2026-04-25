@@ -177,7 +177,7 @@ const Parser = struct {
         const open = (try self.expect(.l_brace, "expected function body")) orelse return self.emptyBlock(self.peek().span);
         const stmts_start = self.tree.reserveStmts();
         var stmts_len: u32 = 0;
-        var final_expr: ?ast_mod.RawExpr = null;
+        var final_expr: ?ast_mod.ExprId = null;
         var end_span = open.span;
 
         while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
@@ -195,8 +195,8 @@ const Parser = struct {
                 stmts_len += 1;
                 end_span = stmt.span;
             } else {
-                const expr = self.parseRawExprUntilStmtEnd();
-                end_span = expr.span;
+                const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
+                end_span = self.tree.exprs.items[expr].span();
                 if (self.match(.semicolon)) |semicolon| {
                     try self.tree.addStmt(.{ .expr_stmt = expr });
                     stmts_len += 1;
@@ -236,8 +236,8 @@ const Parser = struct {
         const name_token = (try self.expectIdentifier("expected binding name")) orelse return error.OutOfMemory;
         _ = (try self.expect(.equal, "expected `=` after binding name")) orelse return error.OutOfMemory;
 
-        const value = self.parseRawExprUntilStmtEnd();
-        var end_span = value.span;
+        const value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+        var end_span = self.tree.exprs.items[value].span();
         if (self.match(.semicolon)) |semicolon| {
             end_span = semicolon.span;
         } else {
@@ -255,11 +255,11 @@ const Parser = struct {
 
     fn parseReturnStmt(self: *Parser) Allocator.Error!ast_mod.ReturnStmt {
         const return_token = (try self.expect(.keyword_return, "expected return statement")) orelse return error.OutOfMemory;
-        var value: ?ast_mod.RawExpr = null;
+        var value: ?ast_mod.ExprId = null;
         var end_span = return_token.span;
         if (self.peekKind() != .semicolon and self.peekKind() != .r_brace and self.peekKind() != .eof) {
-            value = self.parseRawExprUntilStmtEnd();
-            end_span = value.?.span;
+            value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+            end_span = self.tree.exprs.items[value.?].span();
         }
         if (self.match(.semicolon)) |semicolon| {
             end_span = semicolon.span;
@@ -267,37 +267,145 @@ const Parser = struct {
         return .{ .value = value, .span = base.Span.join(return_token.span, end_span) };
     }
 
-    fn parseRawExprUntilStmtEnd(self: *Parser) ast_mod.RawExpr {
-        const start = self.peek().span;
-        var end = start;
-        var paren_depth: usize = 0;
-        var bracket_depth: usize = 0;
-        var brace_depth: usize = 0;
+    const Precedence = enum(u8) {
+        lowest = 0,
+        assignment = 1,
+        logical_or = 2,
+        logical_and = 3,
+        equality = 4,
+        comparison = 5,
+        term = 6,
+        factor = 7,
+    };
 
-        while (self.peekKind() != .eof) {
-            const kind = self.peekKind();
-            if (paren_depth == 0 and bracket_depth == 0 and brace_depth == 0 and (kind == .semicolon or kind == .r_brace)) break;
+    fn parseExpression(self: *Parser, min_precedence: u8) Allocator.Error!ast_mod.ExprId {
+        var left = try self.parsePostfix();
 
-            const token = self.advance();
-            end = token.span;
-            switch (kind) {
-                .l_paren => paren_depth += 1,
-                .r_paren => {
-                    if (paren_depth > 0) paren_depth -= 1;
-                },
-                .l_bracket => bracket_depth += 1,
-                .r_bracket => {
-                    if (bracket_depth > 0) bracket_depth -= 1;
-                },
-                .l_brace => brace_depth += 1,
-                .r_brace => {
-                    if (brace_depth > 0) brace_depth -= 1;
-                },
-                else => {},
+        while (binaryOp(self.peekKind())) |op_info| {
+            if (@intFromEnum(op_info.precedence) < min_precedence) break;
+            _ = self.advance();
+
+            const next_min = if (op_info.right_associative)
+                @intFromEnum(op_info.precedence)
+            else
+                nextPrecedence(op_info.precedence);
+            const right = try self.parseExpression(next_min);
+
+            const span = base.Span.join(self.tree.exprs.items[left].span(), self.tree.exprs.items[right].span());
+            left = try self.tree.addExpr(.{ .binary = .{
+                .op = op_info.op,
+                .left = left,
+                .right = right,
+                .span = span,
+            } });
+        }
+
+        return left;
+    }
+
+    fn parsePostfix(self: *Parser) Allocator.Error!ast_mod.ExprId {
+        var expr = try self.parsePrimary();
+
+        while (true) {
+            if (self.match(.dot)) |_| {
+                const name_token = (try self.expectIdentifier("expected field name after `.`")) orelse return expr;
+                const span = base.Span.join(self.tree.exprs.items[expr].span(), name_token.span);
+                expr = try self.tree.addExpr(.{ .field = .{
+                    .base = expr,
+                    .name = try self.internToken(name_token),
+                    .name_span = name_token.span,
+                    .span = span,
+                } });
+            } else if (self.match(.l_paren)) |_| {
+                const args_start = self.tree.reserveExprArgs();
+                var args_len: u32 = 0;
+                var end_span = self.tree.exprs.items[expr].span();
+                while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
+                    const arg = try self.parseExpression(@intFromEnum(Precedence.lowest));
+                    try self.tree.addExprArg(arg);
+                    args_len += 1;
+                    end_span = self.tree.exprs.items[arg].span();
+                    if (self.match(.comma) == null) break;
+                }
+                if (self.match(.r_paren)) |paren| {
+                    end_span = paren.span;
+                } else {
+                    try self.addError(self.peek().span, "expected `)` after call arguments");
+                }
+                expr = try self.tree.addExpr(.{ .call = .{
+                    .callee = expr,
+                    .args = .{ .start = args_start, .len = args_len },
+                    .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
+                } });
+            } else {
+                break;
             }
         }
 
-        return .{ .span = base.Span.join(start, end) };
+        return expr;
+    }
+
+    fn parsePrimary(self: *Parser) Allocator.Error!ast_mod.ExprId {
+        const token = self.advance();
+        switch (token.kind) {
+            .identifier => return self.tree.addExpr(.{ .name = .{
+                .symbol = try self.internToken(token),
+                .span = token.span,
+            } }),
+            .int_literal => return self.tree.addExpr(.{ .int_literal = token.span }),
+            .float_literal => return self.tree.addExpr(.{ .float_literal = token.span }),
+            .string_literal => return self.tree.addExpr(.{ .string_literal = token.span }),
+            .char_literal => return self.tree.addExpr(.{ .char_literal = token.span }),
+            .keyword_true => return self.tree.addExpr(.{ .bool_literal = .{ .value = true, .span = token.span } }),
+            .keyword_false => return self.tree.addExpr(.{ .bool_literal = .{ .value = false, .span = token.span } }),
+            .l_paren => {
+                const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
+                _ = try self.expect(.r_paren, "expected `)` after expression");
+                return expr;
+            },
+            else => {
+                try self.addError(token.span, "expected expression");
+                return self.tree.addExpr(.{ .name = .{
+                    .symbol = try self.interner.intern("<error>"),
+                    .span = token.span,
+                } });
+            },
+        }
+    }
+
+    const BinaryOpInfo = struct {
+        op: ast_mod.BinaryOp,
+        precedence: Precedence,
+        right_associative: bool = false,
+    };
+
+    fn binaryOp(kind: lexer.TokenKind) ?BinaryOpInfo {
+        return switch (kind) {
+            .equal => .{ .op = .assign, .precedence = .assignment, .right_associative = true },
+            .plus_equal => .{ .op = .add_assign, .precedence = .assignment, .right_associative = true },
+            .minus_equal => .{ .op = .sub_assign, .precedence = .assignment, .right_associative = true },
+            .star_equal => .{ .op = .mul_assign, .precedence = .assignment, .right_associative = true },
+            .slash_equal => .{ .op = .div_assign, .precedence = .assignment, .right_associative = true },
+            .percent_equal => .{ .op = .rem_assign, .precedence = .assignment, .right_associative = true },
+            .pipe_pipe => .{ .op = .logical_or, .precedence = .logical_or },
+            .amp_amp => .{ .op = .logical_and, .precedence = .logical_and },
+            .equal_equal => .{ .op = .equal, .precedence = .equality },
+            .bang_equal => .{ .op = .not_equal, .precedence = .equality },
+            .less => .{ .op = .less, .precedence = .comparison },
+            .less_equal => .{ .op = .less_equal, .precedence = .comparison },
+            .greater => .{ .op = .greater, .precedence = .comparison },
+            .greater_equal => .{ .op = .greater_equal, .precedence = .comparison },
+            .plus => .{ .op = .add, .precedence = .term },
+            .minus => .{ .op = .sub, .precedence = .term },
+            .star => .{ .op = .mul, .precedence = .factor },
+            .slash => .{ .op = .div, .precedence = .factor },
+            .percent => .{ .op = .rem, .precedence = .factor },
+            else => null,
+        };
+    }
+
+    fn nextPrecedence(precedence: Precedence) u8 {
+        return @intFromEnum(precedence) + 1;
     }
 
     fn parseTypeAlias(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
@@ -697,6 +805,7 @@ test "parser builds function declaration AST" {
             "    Return User\n" ++
             "    Block\n" ++
             "      FinalExpr\n" ++
+            "        Name user\n" ++
             "  FnDecl package log_user\n" ++
             "    Param user: User\n" ++
             "    Return ()\n" ++

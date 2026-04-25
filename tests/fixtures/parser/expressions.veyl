@@ -1,0 +1,7 @@
+fn expressions() -> Bool {
+    let n = 1 + 2 * 3;
+    let ok = true && false || n >= 7;
+    let message = "done";
+    print(message);
+    ok == true
+}

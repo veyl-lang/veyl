@@ -1,0 +1,28 @@
+Root
+  FnDecl package expressions
+    Return Bool
+    Block
+      LetStmt n
+        Binary add
+          IntLiteral
+          Binary mul
+            IntLiteral
+            IntLiteral
+      LetStmt ok
+        Binary logical_or
+          Binary logical_and
+            BoolLiteral true
+            BoolLiteral false
+          Binary greater_equal
+            Name n
+            IntLiteral
+      LetStmt message
+        StringLiteral
+      ExprStmt
+        Call
+          Name print
+          Name message
+      FinalExpr
+        Binary equal
+          Name ok
+          BoolLiteral true

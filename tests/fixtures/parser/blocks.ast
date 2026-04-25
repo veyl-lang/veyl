@@ -3,11 +3,19 @@ Root
     Return Int
     Block
       LetStmt x
+        IntLiteral
       LetStmt mut y
+        Name x
       ExprStmt
+        Binary add_assign
+          Name y
+          IntLiteral
       ReturnStmt
+        Name y
   FnDecl package final_expr
     Return Int
     Block
       LetStmt x
+        IntLiteral
       FinalExpr
+        Name x

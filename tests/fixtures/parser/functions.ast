@@ -4,14 +4,24 @@ Root
     Return User
     Block
       ExprStmt
+        Binary add_assign
+          Field age
+            Name user
+          IntLiteral
       FinalExpr
+        Name user
   FnDecl package log_user
     Param user: User
     Return ()
     Block
       ExprStmt
+        Call
+          Name print
+          Field name
+            Name user
   FnDecl private parse_line
     Param line: Str
     Return Pair
     Block
       FinalExpr
+        Name Pair
