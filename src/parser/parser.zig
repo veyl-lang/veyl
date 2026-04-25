@@ -52,6 +52,8 @@ const Parser = struct {
 
             if (self.peekKind() == .keyword_import) {
                 try self.parseImport(visibility, start_span);
+            } else if (self.peekKind() == .keyword_struct) {
+                try self.parseStruct(visibility, start_span);
             } else {
                 try self.addError(self.peek().span, "expected top-level declaration");
                 _ = self.advance();
@@ -97,6 +99,79 @@ const Parser = struct {
             .alias_span = alias_span,
             .span = base.Span.join(start_span, end_span),
         } });
+    }
+
+    fn parseStruct(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_struct, "expected struct declaration")) orelse return;
+        const name_token = (try self.expectIdentifier("expected struct name")) orelse return;
+        const name = try self.internToken(name_token);
+
+        _ = (try self.expect(.l_brace, "expected `{` after struct name")) orelse return;
+
+        const fields_start = self.tree.reserveStructFields();
+        var fields_len: u32 = 0;
+        var end_span = name_token.span;
+
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            self.skipTrivia();
+            if (self.peekKind() == .r_brace or self.peekKind() == .eof) break;
+
+            const field_visibility = if (self.match(.keyword_private) != null)
+                ast_mod.Visibility.private
+            else
+                visibility;
+
+            const field_name_token = (try self.expectIdentifier("expected struct field name")) orelse return;
+            _ = (try self.expect(.colon, "expected `:` after struct field name")) orelse return;
+
+            const type_path = try self.parsePath("expected struct field type");
+            const field_end = self.previous().span;
+            try self.tree.addStructField(.{
+                .visibility = field_visibility,
+                .name = try self.internToken(field_name_token),
+                .name_span = field_name_token.span,
+                .type_path = type_path,
+                .span = base.Span.join(field_name_token.span, field_end),
+            });
+            fields_len += 1;
+            end_span = field_end;
+
+            if (self.match(.comma)) |comma| {
+                end_span = comma.span;
+            }
+        }
+
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after struct fields");
+        }
+
+        _ = try self.tree.addDecl(.{ .struct_decl = .{
+            .visibility = visibility,
+            .name = name,
+            .name_span = name_token.span,
+            .fields = .{ .start = fields_start, .len = fields_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parsePath(self: *Parser, message: []const u8) Allocator.Error!base.Range {
+        const path_start = self.tree.reservePath();
+        var path_len: u32 = 0;
+
+        while (true) {
+            const segment_token = (try self.expectIdentifier(message)) orelse break;
+            try self.tree.addPathSegment(.{
+                .name = try self.internToken(segment_token),
+                .span = segment_token.span,
+            });
+            path_len += 1;
+
+            if (self.match(.dot) == null) break;
+        }
+
+        return .{ .start = path_start, .len = path_len };
     }
 
     fn expect(self: *Parser, kind: lexer.TokenKind, message: []const u8) Allocator.Error!?lexer.Token {
@@ -198,6 +273,42 @@ test "parser builds import AST" {
             "  ImportDecl package\n" ++
             "    path config.Config\n" ++
             "    alias AppConfig\n",
+        dumped,
+    );
+}
+
+test "parser builds struct AST" {
+    const source =
+        \\pub struct User {
+        \\    name: Str,
+        \\    private password_hash: Str,
+        \\}
+        \\
+    ;
+
+    var diagnostics = diag.DiagnosticBag.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var tokens = try lexer.lex(std.testing.allocator, 0, source, &diagnostics);
+    defer tokens.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = try parse(std.testing.allocator, 0, source, tokens.tokens.items, &interner, &diagnostics);
+    defer tree.deinit();
+
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    const dumped = try ast_mod.dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  StructDecl public User\n" ++
+            "    Field public name: Str\n" ++
+            "    Field private password_hash: Str\n",
         dumped,
     );
 }

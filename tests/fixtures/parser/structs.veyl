@@ -1,0 +1,10 @@
+pub struct User {
+    id: UserId,
+    name: Str,
+    private password_hash: Str,
+}
+
+struct Config {
+    host: Str,
+    port: Int,
+}
