@@ -64,6 +64,21 @@ fn checkFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
         try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
         std.process.exit(1);
     }
+
+    var hir = try veyl.hir.lowerAst(allocator, &compilation.tree.?);
+    defer hir.deinit();
+
+    var resolved = try veyl.resolve.resolveModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
+    defer resolved.deinit();
+
+    if (!compilation.diagnostics.hasErrors()) {
+        try veyl.typeck.checkModule(allocator, &hir, &compilation.diagnostics);
+    }
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
 }
 
 fn dumpTokens(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
