@@ -52,6 +52,8 @@ const Parser = struct {
 
             if (self.peekKind() == .keyword_import) {
                 try self.parseImport(visibility, start_span);
+            } else if (self.peekKind() == .keyword_type) {
+                try self.parseTypeAlias(visibility, start_span);
             } else if (self.peekKind() == .keyword_struct) {
                 try self.parseStruct(visibility, start_span);
             } else if (self.peekKind() == .keyword_enum) {
@@ -99,6 +101,26 @@ const Parser = struct {
             .path = .{ .start = path_start, .len = path_len },
             .alias = alias,
             .alias_span = alias_span,
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parseTypeAlias(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_type, "expected type alias declaration")) orelse return;
+        const name_token = (try self.expectIdentifier("expected type alias name")) orelse return;
+        _ = (try self.expect(.equal, "expected `=` after type alias name")) orelse return;
+
+        const aliased_type = try self.parsePath("expected aliased type");
+        var end_span = self.previous().span;
+        if (self.match(.semicolon)) |semicolon| {
+            end_span = semicolon.span;
+        }
+
+        _ = try self.tree.addDecl(.{ .type_alias = .{
+            .visibility = visibility,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .aliased_type = aliased_type,
             .span = base.Span.join(start_span, end_span),
         } });
     }
@@ -409,6 +431,39 @@ test "parser builds import AST" {
             "  ImportDecl package\n" ++
             "    path config.Config\n" ++
             "    alias AppConfig\n",
+        dumped,
+    );
+}
+
+test "parser builds type alias AST" {
+    const source =
+        \\pub type UserId = Int;
+        \\type ConfigMap = Map;
+        \\
+    ;
+
+    var diagnostics = diag.DiagnosticBag.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var tokens = try lexer.lex(std.testing.allocator, 0, source, &diagnostics);
+    defer tokens.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = try parse(std.testing.allocator, 0, source, tokens.tokens.items, &interner, &diagnostics);
+    defer tree.deinit();
+
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    const dumped = try ast_mod.dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  TypeAliasDecl public UserId = Int\n" ++
+            "  TypeAliasDecl package ConfigMap = Map\n",
         dumped,
     );
 }

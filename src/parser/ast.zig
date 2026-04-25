@@ -25,6 +25,14 @@ pub const ImportDecl = struct {
     span: base.Span,
 };
 
+pub const TypeAliasDecl = struct {
+    visibility: Visibility,
+    name: base.SymbolId,
+    name_span: base.Span,
+    aliased_type: base.Range,
+    span: base.Span,
+};
+
 pub const StructField = struct {
     visibility: Visibility,
     name: base.SymbolId,
@@ -72,12 +80,14 @@ pub const EnumDecl = struct {
 
 pub const Decl = union(enum) {
     import: ImportDecl,
+    type_alias: TypeAliasDecl,
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
 
     pub fn span(self: Decl) base.Span {
         return switch (self) {
             .import => |decl| decl.span,
+            .type_alias => |decl| decl.span,
             .struct_decl => |decl| decl.span,
             .enum_decl => |decl| decl.span,
         };
@@ -156,12 +166,27 @@ pub fn dumpAst(allocator: Allocator, ast: *const Ast, interner: *const base.Inte
     for (ast.decls.items) |decl| {
         switch (decl) {
             .import => |import_decl| try dumpImport(&output.writer, ast, interner, import_decl),
+            .type_alias => |type_alias| try dumpTypeAlias(&output.writer, ast, interner, type_alias),
             .struct_decl => |struct_decl| try dumpStruct(&output.writer, ast, interner, struct_decl),
             .enum_decl => |enum_decl| try dumpEnum(&output.writer, ast, interner, enum_decl),
         }
     }
 
     return output.toOwnedSlice();
+}
+
+fn dumpTypeAlias(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    type_alias: TypeAliasDecl,
+) std.Io.Writer.Error!void {
+    try writer.print("  TypeAliasDecl {s} {s} = ", .{
+        @tagName(type_alias.visibility),
+        interner.get(type_alias.name) orelse "<missing>",
+    });
+    try dumpPath(writer, ast, interner, type_alias.aliased_type);
+    try writer.writeByte('\n');
 }
 
 fn dumpEnum(
@@ -273,6 +298,33 @@ test "AST dump renders import declarations" {
         "Root\n" ++
             "  ImportDecl public\n" ++
             "    path std.fs\n",
+        dumped,
+    );
+}
+
+test "AST dump renders type alias declarations" {
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = Ast.init(std.testing.allocator, 0);
+    defer tree.deinit();
+
+    const int_type_start = tree.reservePath();
+    try tree.addPathSegment(.{ .name = try interner.intern("Int"), .span = .{ .source = 0, .start = 14, .len = 3 } });
+    _ = try tree.addDecl(.{ .type_alias = .{
+        .visibility = .package,
+        .name = try interner.intern("UserId"),
+        .name_span = .{ .source = 0, .start = 5, .len = 6 },
+        .aliased_type = .{ .start = int_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 0, .len = 17 },
+    } });
+
+    const dumped = try dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  TypeAliasDecl package UserId = Int\n",
         dumped,
     );
 }

@@ -1,0 +1,4 @@
+Root
+  TypeAliasDecl public UserId = Int
+  TypeAliasDecl package UserMap = Map
+  TypeAliasDecl private Secret = internal.Secret

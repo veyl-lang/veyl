@@ -7,6 +7,7 @@ pub const DeclId = ast.DeclId;
 pub const Visibility = ast.Visibility;
 pub const PathSegment = ast.PathSegment;
 pub const ImportDecl = ast.ImportDecl;
+pub const TypeAliasDecl = ast.TypeAliasDecl;
 pub const StructDecl = ast.StructDecl;
 pub const StructField = ast.StructField;
 pub const EnumDecl = ast.EnumDecl;

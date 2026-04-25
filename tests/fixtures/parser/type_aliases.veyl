@@ -1,0 +1,3 @@
+pub type UserId = Int;
+type UserMap = Map;
+private type Secret = internal.Secret;
