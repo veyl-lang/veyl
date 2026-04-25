@@ -8,6 +8,7 @@ pub const DeclId = base.DeclId;
 pub const BlockId = u32;
 pub const ExprId = base.ExprId;
 pub const StmtId = base.StmtId;
+pub const TypeId = base.TypeId;
 
 pub const Visibility = enum {
     package,
@@ -32,15 +33,27 @@ pub const TypeAliasDecl = struct {
     visibility: Visibility,
     name: base.SymbolId,
     name_span: base.Span,
-    aliased_type: base.Range,
+    aliased_type: TypeId,
     span: base.Span,
+};
+
+pub const TypeExpr = union(enum) {
+    path: struct { segments: base.Range, args: base.Range = .{ .start = 0, .len = 0 }, span: base.Span },
+    unit: base.Span,
+
+    pub fn span(self: TypeExpr) base.Span {
+        return switch (self) {
+            .path => |type_expr| type_expr.span,
+            .unit => |span_value| span_value,
+        };
+    }
 };
 
 pub const FnParam = struct {
     is_mut: bool,
     name: base.SymbolId,
     name_span: base.Span,
-    type_path: base.Range,
+    type_expr: TypeId,
     span: base.Span,
 };
 
@@ -49,7 +62,7 @@ pub const FnDecl = struct {
     name: base.SymbolId,
     name_span: base.Span,
     params: base.Range,
-    return_type: ?base.Range = null,
+    return_type: ?TypeId = null,
     body: BlockId,
     span: base.Span,
 };
@@ -200,7 +213,7 @@ pub const StructField = struct {
     visibility: Visibility,
     name: base.SymbolId,
     name_span: base.Span,
-    type_path: base.Range,
+    type_expr: TypeId,
     span: base.Span,
 };
 
@@ -215,7 +228,7 @@ pub const StructDecl = struct {
 pub const EnumField = struct {
     name: ?base.SymbolId = null,
     name_span: ?base.Span = null,
-    type_path: base.Range,
+    type_expr: TypeId,
     span: base.Span,
 };
 
@@ -264,6 +277,8 @@ pub const Ast = struct {
     source: base.SourceId,
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
+    types: std.ArrayListUnmanaged(TypeExpr) = .empty,
+    type_args: std.ArrayListUnmanaged(TypeId) = .empty,
     fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
@@ -285,6 +300,8 @@ pub const Ast = struct {
     pub fn deinit(self: *Ast) void {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
+        self.types.deinit(self.allocator);
+        self.type_args.deinit(self.allocator);
         self.fn_params.deinit(self.allocator);
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
@@ -310,6 +327,20 @@ pub const Ast = struct {
 
     pub fn reservePath(self: *const Ast) u32 {
         return @intCast(self.path_segments.items.len);
+    }
+
+    pub fn addType(self: *Ast, type_expr: TypeExpr) Allocator.Error!TypeId {
+        const id: TypeId = @intCast(self.types.items.len);
+        try self.types.append(self.allocator, type_expr);
+        return id;
+    }
+
+    pub fn reserveTypeArgs(self: *const Ast) u32 {
+        return @intCast(self.type_args.items.len);
+    }
+
+    pub fn addTypeArg(self: *Ast, type_expr: TypeId) Allocator.Error!void {
+        try self.type_args.append(self.allocator, type_expr);
     }
 
     pub fn reserveStructFields(self: *const Ast) u32 {
@@ -427,13 +458,13 @@ fn dumpFn(
             if (param.is_mut) "mut " else "",
             interner.get(param.name) orelse "<missing>",
         });
-        try dumpPath(writer, ast, interner, param.type_path);
+        try dumpTypeExpr(writer, ast, interner, param.type_expr);
         try writer.writeByte('\n');
     }
 
     try writer.writeAll("    Return ");
     if (fn_decl.return_type) |return_type| {
-        try dumpPath(writer, ast, interner, return_type);
+        try dumpTypeExpr(writer, ast, interner, return_type);
     } else {
         try writer.writeAll("()");
     }
@@ -631,7 +662,7 @@ fn dumpTypeAlias(
         @tagName(type_alias.visibility),
         interner.get(type_alias.name) orelse "<missing>",
     });
-    try dumpPath(writer, ast, interner, type_alias.aliased_type);
+    try dumpTypeExpr(writer, ast, interner, type_alias.aliased_type);
     try writer.writeByte('\n');
 }
 
@@ -663,7 +694,7 @@ fn dumpEnum(
             } else {
                 try writer.writeAll("_: ");
             }
-            try dumpPath(writer, ast, interner, field.type_path);
+            try dumpTypeExpr(writer, ast, interner, field.type_expr);
             try writer.writeByte('\n');
         }
     }
@@ -687,7 +718,7 @@ fn dumpStruct(
             @tagName(field.visibility),
             interner.get(field.name) orelse "<missing>",
         });
-        try dumpPath(writer, ast, interner, field.type_path);
+        try dumpTypeExpr(writer, ast, interner, field.type_expr);
         try writer.writeByte('\n');
     }
 }
@@ -718,6 +749,31 @@ fn dumpPath(
     for (ast.path_segments.items[start..end], 0..) |segment, index| {
         if (index != 0) try writer.writeByte('.');
         try writer.writeAll(interner.get(segment.name) orelse "<missing>");
+    }
+}
+
+fn dumpTypeExpr(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    type_id: TypeId,
+) std.Io.Writer.Error!void {
+    const type_expr = ast.types.items[type_id];
+    switch (type_expr) {
+        .unit => try writer.writeAll("()"),
+        .path => |path_type| {
+            try dumpPath(writer, ast, interner, path_type.segments);
+            if (path_type.args.len != 0) {
+                try writer.writeByte('<');
+                const start: usize = @intCast(path_type.args.start);
+                const end: usize = @intCast(path_type.args.end());
+                for (ast.type_args.items[start..end], 0..) |arg, index| {
+                    if (index != 0) try writer.writeAll(", ");
+                    try dumpTypeExpr(writer, ast, interner, arg);
+                }
+                try writer.writeByte('>');
+            }
+        },
     }
 }
 
@@ -757,11 +813,15 @@ test "AST dump renders type alias declarations" {
 
     const int_type_start = tree.reservePath();
     try tree.addPathSegment(.{ .name = try interner.intern("Int"), .span = .{ .source = 0, .start = 14, .len = 3 } });
+    const int_type = try tree.addType(.{ .path = .{
+        .segments = .{ .start = int_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 14, .len = 3 },
+    } });
     _ = try tree.addDecl(.{ .type_alias = .{
         .visibility = .package,
         .name = try interner.intern("UserId"),
         .name_span = .{ .source = 0, .start = 5, .len = 6 },
-        .aliased_type = .{ .start = int_type_start, .len = 1 },
+        .aliased_type = int_type,
         .span = .{ .source = 0, .start = 0, .len = 17 },
     } });
 
@@ -784,13 +844,17 @@ test "AST dump renders function declarations" {
 
     const user_type_start = tree.reservePath();
     try tree.addPathSegment(.{ .name = try interner.intern("User"), .span = .{ .source = 0, .start = 22, .len = 4 } });
+    const user_type = try tree.addType(.{ .path = .{
+        .segments = .{ .start = user_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 22, .len = 4 },
+    } });
 
     const params_start = tree.reserveFnParams();
     try tree.addFnParam(.{
         .is_mut = true,
         .name = try interner.intern("user"),
         .name_span = .{ .source = 0, .start = 16, .len = 4 },
-        .type_path = .{ .start = user_type_start, .len = 1 },
+        .type_expr = user_type,
         .span = .{ .source = 0, .start = 12, .len = 14 },
     });
 
@@ -809,7 +873,7 @@ test "AST dump renders function declarations" {
         .name = try interner.intern("birthday"),
         .name_span = .{ .source = 0, .start = 7, .len = 8 },
         .params = .{ .start = params_start, .len = 1 },
-        .return_type = .{ .start = user_type_start, .len = 1 },
+        .return_type = user_type,
         .body = body,
         .span = .{ .source = 0, .start = 0, .len = 37 },
     } });
@@ -836,12 +900,16 @@ test "AST dump renders struct declarations" {
 
     const name_type_start = tree.reservePath();
     try tree.addPathSegment(.{ .name = try interner.intern("Str"), .span = .{ .source = 0, .start = 23, .len = 3 } });
+    const name_type = try tree.addType(.{ .path = .{
+        .segments = .{ .start = name_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 23, .len = 3 },
+    } });
     const fields_start = tree.reserveStructFields();
     try tree.addStructField(.{
         .visibility = .public,
         .name = try interner.intern("name"),
         .name_span = .{ .source = 0, .start = 17, .len = 4 },
-        .type_path = .{ .start = name_type_start, .len = 1 },
+        .type_expr = name_type,
         .span = .{ .source = 0, .start = 17, .len = 9 },
     });
     _ = try tree.addDecl(.{ .struct_decl = .{
@@ -874,8 +942,12 @@ test "AST dump renders enum declarations" {
     const fields_start = tree.reserveEnumFields();
     const int_type_start = tree.reservePath();
     try tree.addPathSegment(.{ .name = try interner.intern("Int"), .span = .{ .source = 0, .start = 22, .len = 3 } });
+    const int_type = try tree.addType(.{ .path = .{
+        .segments = .{ .start = int_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 22, .len = 3 },
+    } });
     try tree.addEnumField(.{
-        .type_path = .{ .start = int_type_start, .len = 1 },
+        .type_expr = int_type,
         .span = .{ .source = 0, .start = 22, .len = 3 },
     });
     try tree.addEnumVariant(.{

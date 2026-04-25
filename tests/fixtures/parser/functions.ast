@@ -21,7 +21,10 @@ Root
             Name user
   FnDecl private parse_line
     Param line: Str
-    Return Pair
+    Return Result<Pair, ParseError>
     Block
       FinalExpr
         Name Pair
+  FnDecl package noop
+    Return ()
+    Block

@@ -124,9 +124,9 @@ const Parser = struct {
 
         _ = (try self.expect(.r_paren, "expected `)` after function parameters")) orelse return;
 
-        var return_type: ?base.Range = null;
+        var return_type: ?ast_mod.TypeId = null;
         if (self.match(.arrow) != null) {
-            return_type = try self.parsePath("expected function return type");
+            return_type = try self.parseTypeExpr("expected function return type");
         }
 
         const body = try self.parseBlock();
@@ -153,23 +153,23 @@ const Parser = struct {
             .is_mut = is_mut,
             .name = try self.interner.intern("<error>"),
             .name_span = start_span,
-            .type_path = .{ .start = self.tree.reservePath(), .len = 0 },
+            .type_expr = try self.tree.addType(.{ .unit = start_span }),
             .span = start_span,
         };
         _ = (try self.expect(.colon, "expected `:` after function parameter name")) orelse return .{
             .is_mut = is_mut,
             .name = try self.internToken(name_token),
             .name_span = name_token.span,
-            .type_path = .{ .start = self.tree.reservePath(), .len = 0 },
+            .type_expr = try self.tree.addType(.{ .unit = name_token.span }),
             .span = name_token.span,
         };
 
-        const type_path = try self.parsePath("expected function parameter type");
+        const type_expr = try self.parseTypeExpr("expected function parameter type");
         return .{
             .is_mut = is_mut,
             .name = try self.internToken(name_token),
             .name_span = name_token.span,
-            .type_path = type_path,
+            .type_expr = type_expr,
             .span = base.Span.join(start_span, self.previous().span),
         };
     }
@@ -611,7 +611,7 @@ const Parser = struct {
         const name_token = (try self.expectIdentifier("expected type alias name")) orelse return;
         _ = (try self.expect(.equal, "expected `=` after type alias name")) orelse return;
 
-        const aliased_type = try self.parsePath("expected aliased type");
+        const aliased_type = try self.parseTypeExpr("expected aliased type");
         var end_span = self.previous().span;
         if (self.match(.semicolon)) |semicolon| {
             end_span = semicolon.span;
@@ -681,10 +681,10 @@ const Parser = struct {
             var end_span = name_token.span;
 
             while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
-                const type_path = try self.parsePath("expected tuple variant field type");
+                const type_expr = try self.parseTypeExpr("expected tuple variant field type");
                 const field_end = self.previous().span;
                 try self.tree.addEnumField(.{
-                    .type_path = type_path,
+                    .type_expr = type_expr,
                     .span = field_end,
                 });
                 fields_len += 1;
@@ -723,12 +723,12 @@ const Parser = struct {
                     .span = name_token.span,
                 };
 
-                const type_path = try self.parsePath("expected record variant field type");
+                const type_expr = try self.parseTypeExpr("expected record variant field type");
                 const field_end = self.previous().span;
                 try self.tree.addEnumField(.{
                     .name = try self.internToken(field_name_token),
                     .name_span = field_name_token.span,
-                    .type_path = type_path,
+                    .type_expr = type_expr,
                     .span = base.Span.join(field_name_token.span, field_end),
                 });
                 fields_len += 1;
@@ -783,13 +783,13 @@ const Parser = struct {
             const field_name_token = (try self.expectIdentifier("expected struct field name")) orelse return;
             _ = (try self.expect(.colon, "expected `:` after struct field name")) orelse return;
 
-            const type_path = try self.parsePath("expected struct field type");
+            const type_expr = try self.parseTypeExpr("expected struct field type");
             const field_end = self.previous().span;
             try self.tree.addStructField(.{
                 .visibility = field_visibility,
                 .name = try self.internToken(field_name_token),
                 .name_span = field_name_token.span,
-                .type_path = type_path,
+                .type_expr = type_expr,
                 .span = base.Span.join(field_name_token.span, field_end),
             });
             fields_len += 1;
@@ -815,6 +815,61 @@ const Parser = struct {
         } });
     }
 
+    fn parseTypeExpr(self: *Parser, message: []const u8) Allocator.Error!ast_mod.TypeId {
+        if (self.match(.l_paren)) |open| {
+            if (self.match(.r_paren)) |close| {
+                return self.tree.addType(.{ .unit = base.Span.join(open.span, close.span) });
+            }
+
+            try self.addError(self.peek().span, "expected `)` after unit type");
+            return self.tree.addType(.{ .unit = open.span });
+        }
+
+        const path_start = self.tree.reservePath();
+        var path_len: u32 = 0;
+        const first_segment = (try self.expectTypeSegment(message)) orelse return self.tree.addType(.{ .unit = self.peek().span });
+        try self.tree.addPathSegment(.{
+            .name = try self.internToken(first_segment),
+            .span = first_segment.span,
+        });
+        path_len += 1;
+        var end_span = first_segment.span;
+
+        while (self.match(.dot) != null) {
+            const segment_token = (try self.expectTypeSegment("expected type path segment after `.`")) orelse break;
+            try self.tree.addPathSegment(.{
+                .name = try self.internToken(segment_token),
+                .span = segment_token.span,
+            });
+            path_len += 1;
+            end_span = segment_token.span;
+        }
+
+        const args_start = self.tree.reserveTypeArgs();
+        var args_len: u32 = 0;
+        if (self.match(.less) != null) {
+            while (self.peekKind() != .greater and self.peekKind() != .eof) {
+                const arg = try self.parseTypeExpr("expected type argument");
+                try self.tree.addTypeArg(arg);
+                args_len += 1;
+                end_span = self.tree.types.items[arg].span();
+                if (self.match(.comma) == null) break;
+            }
+
+            if (self.match(.greater)) |greater| {
+                end_span = greater.span;
+            } else {
+                try self.addError(self.peek().span, "expected `>` after type arguments");
+            }
+        }
+
+        return self.tree.addType(.{ .path = .{
+            .segments = .{ .start = path_start, .len = path_len },
+            .args = .{ .start = args_start, .len = args_len },
+            .span = base.Span.join(first_segment.span, end_span),
+        } });
+    }
+
     fn parsePath(self: *Parser, message: []const u8) Allocator.Error!base.Range {
         const path_start = self.tree.reservePath();
         var path_len: u32 = 0;
@@ -831,6 +886,16 @@ const Parser = struct {
         }
 
         return .{ .start = path_start, .len = path_len };
+    }
+
+    fn expectTypeSegment(self: *Parser, message: []const u8) Allocator.Error!?lexer.Token {
+        return switch (self.peekKind()) {
+            .identifier, .keyword_Self => self.advance(),
+            else => {
+                try self.addError(self.peek().span, message);
+                return null;
+            },
+        };
     }
 
     fn expect(self: *Parser, kind: lexer.TokenKind, message: []const u8) Allocator.Error!?lexer.Token {

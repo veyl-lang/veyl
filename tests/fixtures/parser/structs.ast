@@ -2,6 +2,7 @@ Root
   StructDecl public User
     Field public id: UserId
     Field public name: Str
+    Field public tags: Array<Str>
     Field private password_hash: Str
   StructDecl package Config
     Field package host: Str

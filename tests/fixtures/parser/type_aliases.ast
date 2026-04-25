@@ -1,4 +1,4 @@
 Root
   TypeAliasDecl public UserId = Int
-  TypeAliasDecl package UserMap = Map
-  TypeAliasDecl private Secret = internal.Secret
+  TypeAliasDecl package UserMap = Map<UserId, User>
+  TypeAliasDecl private Secret = Result<Int, internal.Secret>

@@ -1,6 +1,7 @@
 pub struct User {
     id: UserId,
     name: Str,
+    tags: Array<Str>,
     private password_hash: Str,
 }
 

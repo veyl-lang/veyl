@@ -7,5 +7,5 @@ Root
       Field height: Float
     Variant tuple Pair
       Field _: Int
-      Field _: Int
+      Field _: Option<Int>
     Variant unit Point

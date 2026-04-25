@@ -1,3 +1,3 @@
 pub type UserId = Int;
-type UserMap = Map;
-private type Secret = internal.Secret;
+type UserMap = Map<UserId, User>;
+private type Secret = Result<Int, internal.Secret>;
