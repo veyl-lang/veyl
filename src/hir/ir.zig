@@ -205,10 +205,10 @@ pub const MatchArm = struct {
 };
 
 pub const Stmt = union(enum) {
-    let_stmt: struct { name: ?base.SymbolId, value: ExprId, else_block: ?BlockId, span: base.Span },
+    let_stmt: struct { pattern: PatternId, name: ?base.SymbolId, value: ExprId, else_block: ?BlockId, span: base.Span },
     return_stmt: struct { value: ?ExprId, span: base.Span },
     while_stmt: struct { condition: ControlCondition, body: BlockId, span: base.Span },
-    for_stmt: struct { name: ?base.SymbolId, iterable: ExprId, body: BlockId, span: base.Span },
+    for_stmt: struct { pattern: PatternId, name: ?base.SymbolId, iterable: ExprId, body: BlockId, span: base.Span },
     defer_stmt: struct { kind: parser.ast.DeferKind, body: BlockId, span: base.Span },
     break_stmt: base.Span,
     continue_stmt: base.Span,
@@ -515,6 +515,7 @@ fn lowerBlock(hir: *Hir, ast: *const parser.Ast, block_id: parser.ast.BlockId) A
 fn lowerStmt(hir: *Hir, ast: *const parser.Ast, stmt: parser.Stmt) Allocator.Error!Stmt {
     return switch (stmt) {
         .let_stmt => |let_stmt| .{ .let_stmt = .{
+            .pattern = try lowerPattern(hir, ast, let_stmt.pattern),
             .name = bindingName(ast, let_stmt.pattern),
             .value = try lowerExpr(hir, ast, let_stmt.value),
             .else_block = if (let_stmt.else_block) |else_block| try lowerBlock(hir, ast, else_block) else null,
@@ -531,6 +532,7 @@ fn lowerStmt(hir: *Hir, ast: *const parser.Ast, stmt: parser.Stmt) Allocator.Err
             .span = while_stmt.span,
         } },
         .for_stmt => |for_stmt| .{ .for_stmt = .{
+            .pattern = try lowerPattern(hir, ast, for_stmt.pattern),
             .name = bindingName(ast, for_stmt.pattern),
             .iterable = try lowerExpr(hir, ast, for_stmt.iterable),
             .body = try lowerBlock(hir, ast, for_stmt.body),
