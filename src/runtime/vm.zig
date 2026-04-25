@@ -79,6 +79,8 @@ pub const Vm = struct {
                 .less_equal => try self.binaryCompare(.less_equal),
                 .greater => try self.binaryCompare(.greater),
                 .greater_equal => try self.binaryCompare(.greater_equal),
+                .logical_and => try self.binaryBool(.logical_and),
+                .logical_or => try self.binaryBool(.logical_or),
                 .jump => {
                     ip = @intCast(instruction.operand);
                     continue;
@@ -162,6 +164,17 @@ pub const Vm = struct {
                 else => return error.TypeMismatch,
             },
             else => return error.TypeMismatch,
+        };
+        try self.stack.append(self.allocator, .{ .bool = result });
+    }
+
+    fn binaryBool(self: *Vm, op: bytecode.Op) VmError!void {
+        const right = try self.popBool();
+        const left = try self.popBool();
+        const result = switch (op) {
+            .logical_and => left and right,
+            .logical_or => left or right,
+            else => return error.UnsupportedInstruction,
         };
         try self.stack.append(self.allocator, .{ .bool = result });
     }
