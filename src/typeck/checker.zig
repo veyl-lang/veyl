@@ -15,6 +15,7 @@ pub const Type = enum {
     float,
     string,
     char,
+    array,
 };
 
 pub fn checkModule(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, diagnostics: *diag.DiagnosticBag) CheckError!void {
@@ -164,8 +165,68 @@ fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *co
         .try_expr => |try_expr| try inferExpr(allocator, module, interner, functions, env, try_expr.value, expected_return, diagnostics),
         .catch_expr => |catch_expr| try inferExpr(allocator, module, interner, functions, env, catch_expr.value, expected_return, diagnostics),
         .call => |call| try inferCallExpr(allocator, module, interner, functions, env, call, expected_return, diagnostics),
-        .array_literal, .struct_literal, .index, .field, .unsupported => .unknown,
+        .array_literal => |array_literal| try inferArrayLiteral(allocator, module, interner, functions, env, array_literal, expected_return, diagnostics),
+        .index => |index| try inferIndexExpr(allocator, module, interner, functions, env, index, expected_return, diagnostics),
+        .struct_literal, .field, .unsupported => .unknown,
     };
+}
+
+fn inferArrayLiteral(
+    allocator: std.mem.Allocator,
+    module: *const hir.Hir,
+    interner: *const base.Interner,
+    functions: *const FunctionEnv,
+    env: *TypeEnv,
+    array_literal: anytype,
+    expected_return: Type,
+    diagnostics: *diag.DiagnosticBag,
+) CheckError!Type {
+    var element_type = Type.unknown;
+    const start: usize = @intCast(array_literal.items.start);
+    const end: usize = @intCast(array_literal.items.end());
+    for (module.expr_args.items[start..end]) |item| {
+        const item_type = try inferExpr(allocator, module, interner, functions, env, item, expected_return, diagnostics);
+        if (item_type == .unknown) continue;
+        if (element_type == .unknown) {
+            element_type = item_type;
+        } else if (element_type != item_type) {
+            try diagnostics.add(.{
+                .severity = .err,
+                .span = exprSpan(module, item),
+                .message = "array elements must have matching types",
+            });
+        }
+    }
+    return .array;
+}
+
+fn inferIndexExpr(
+    allocator: std.mem.Allocator,
+    module: *const hir.Hir,
+    interner: *const base.Interner,
+    functions: *const FunctionEnv,
+    env: *TypeEnv,
+    index: anytype,
+    expected_return: Type,
+    diagnostics: *diag.DiagnosticBag,
+) CheckError!Type {
+    const base_type = try inferExpr(allocator, module, interner, functions, env, index.base, expected_return, diagnostics);
+    const index_type = try inferExpr(allocator, module, interner, functions, env, index.index, expected_return, diagnostics);
+    if (base_type != .unknown and base_type != .array) {
+        try diagnostics.add(.{
+            .severity = .err,
+            .span = exprSpan(module, index.base),
+            .message = "index base must be an array",
+        });
+    }
+    if (index_type != .unknown and index_type != .int) {
+        try diagnostics.add(.{
+            .severity = .err,
+            .span = exprSpan(module, index.index),
+            .message = "array index must be Int",
+        });
+    }
+    return .unknown;
 }
 
 fn inferIfExpr(

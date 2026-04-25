@@ -1,0 +1,5 @@
+error: array index must be Int
+  --> array_index_non_int.veyl:3:24
+   |
+  3 |     let value = values[true];
+   |                        ^^^^
