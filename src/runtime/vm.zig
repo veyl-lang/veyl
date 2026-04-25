@@ -10,6 +10,7 @@ pub const Value = union(enum) {
     float: f64,
     char: u21,
     string: []const u8,
+    array: []Value,
 };
 
 pub const VmError = error{
@@ -25,12 +26,15 @@ pub const VmError = error{
 pub const Vm = struct {
     allocator: Allocator,
     stack: std.ArrayListUnmanaged(Value) = .empty,
+    arrays: std.ArrayListUnmanaged([]Value) = .empty,
 
     pub fn init(allocator: Allocator) Vm {
         return .{ .allocator = allocator };
     }
 
     pub fn deinit(self: *Vm) void {
+        for (self.arrays.items) |array| self.allocator.free(array);
+        self.arrays.deinit(self.allocator);
         self.stack.deinit(self.allocator);
         self.* = undefined;
     }
@@ -72,6 +76,8 @@ pub const Vm = struct {
                 .store_local => locals[instruction.operand] = try self.pop(),
                 .call_function => try self.callFunction(module, instruction.operand),
                 .builtin_assert => try self.assertBuiltin(instruction.operand),
+                .array_new => try self.arrayNew(instruction.operand),
+                .index_get => try self.indexGet(),
                 .add => try self.binaryNumber(.add),
                 .sub => try self.binaryNumber(.sub),
                 .mul => try self.binaryNumber(.mul),
@@ -127,6 +133,37 @@ pub const Vm = struct {
         if (arg_count != 1) return error.TypeMismatch;
         if (!try self.popBool()) return error.AssertionFailed;
         try self.stack.append(self.allocator, .unit);
+    }
+
+    fn arrayNew(self: *Vm, item_count: u32) VmError!void {
+        const count: usize = @intCast(item_count);
+        const values = try self.allocator.alloc(Value, count);
+        errdefer self.allocator.free(values);
+        var remaining = count;
+        while (remaining != 0) {
+            remaining -= 1;
+            values[remaining] = try self.pop();
+        }
+        try self.arrays.append(self.allocator, values);
+        try self.stack.append(self.allocator, .{ .array = values });
+    }
+
+    fn indexGet(self: *Vm) VmError!void {
+        const index_value = try self.pop();
+        const base = try self.pop();
+        const index = switch (index_value) {
+            .int => |value| value,
+            else => return error.TypeMismatch,
+        };
+        if (index < 0) return error.TypeMismatch;
+        switch (base) {
+            .array => |values| {
+                const array_index: usize = @intCast(index);
+                if (array_index >= values.len) return error.TypeMismatch;
+                try self.stack.append(self.allocator, values[array_index]);
+            },
+            else => return error.TypeMismatch,
+        }
     }
 
     fn binaryNumber(self: *Vm, op: bytecode.Op) VmError!void {

@@ -1,0 +1,4 @@
+fn main() -> Int {
+    let values = [1, 42, 3];
+    values[1]
+}

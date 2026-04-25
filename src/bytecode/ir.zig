@@ -19,6 +19,8 @@ pub const Op = enum {
     call,
     call_function,
     builtin_assert,
+    array_new,
+    index_get,
     add,
     sub,
     mul,
@@ -324,6 +326,19 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
             }
             try emit(bytecode, .call, call.args.len);
         },
+        .array_literal => |array_literal| {
+            const start: usize = @intCast(array_literal.items.start);
+            const end: usize = @intCast(array_literal.items.end());
+            for (module.expr_args.items[start..end]) |item| {
+                try compileExpr(context, item);
+            }
+            try emit(bytecode, .array_new, array_literal.items.len);
+        },
+        .index => |index| {
+            try compileExpr(context, index.base);
+            try compileExpr(context, index.index);
+            try emit(bytecode, .index_get, 0);
+        },
         .if_expr => |if_expr| try compileIfExpr(context, if_expr),
         else => try emit(bytecode, .unsupported, 0),
     }
@@ -468,7 +483,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
             switch (instruction.op) {
                 .get_name, .get_field => try output.writer.print(" {s}", .{interner.get(instruction.operand) orelse "<missing>"}),
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
-                .call, .call_function, .builtin_assert, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
+                .call, .call_function, .builtin_assert, .array_new, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_float => try output.writer.print(" {d}", .{bytecode.float_constants.items[instruction.operand]}),
                 .constant_char => try output.writer.print(" '{c}'", .{@as(u8, @intCast(bytecode.char_constants.items[instruction.operand]))}),
