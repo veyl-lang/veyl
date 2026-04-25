@@ -1,0 +1,11 @@
+fn classify(code: Int, result: Result<Int, Error>) -> Str {
+    let label = match code {
+        200..=299 => "ok",
+        400 | 404 => "bad",
+        _ => "other",
+    };
+    match result {
+        Ok(value) => value.to_str(),
+        Err(err) => "error",
+    }
+}

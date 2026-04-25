@@ -1,0 +1,39 @@
+HirRoot
+  Function package classify params=2
+    Block
+      Let label
+        Match
+          Value
+            Name code
+          Arm
+            Pattern Range inclusive
+              Pattern IntLiteral
+              Pattern IntLiteral
+            Body
+              StringLiteral
+          Arm
+            Pattern Or
+              Pattern IntLiteral
+              Pattern IntLiteral
+            Body
+              StringLiteral
+          Arm
+            Pattern Wildcard
+            Body
+              StringLiteral
+      FinalExpr
+        Match
+          Value
+            Name result
+          Arm
+            Pattern Tuple Ok
+              Pattern Binding value
+            Body
+              Call
+                Field to_str
+                  Name value
+          Arm
+            Pattern Tuple Err
+              Pattern Binding err
+            Body
+              StringLiteral

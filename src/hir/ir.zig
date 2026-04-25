@@ -8,6 +8,7 @@ const DumpError = Allocator.Error || std.Io.Writer.Error;
 pub const ExprId = u32;
 pub const StmtId = u32;
 pub const BlockId = u32;
+pub const PatternId = u32;
 
 pub const PathSegment = struct {
     name: base.SymbolId,
@@ -65,6 +66,7 @@ pub const Expr = union(enum) {
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
     block_expr: struct { block: BlockId, span: base.Span },
     if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId, span: base.Span },
+    match_expr: struct { value: ExprId, arms: base.Range, span: base.Span },
     try_expr: struct { value: ExprId, span: base.Span },
     catch_expr: struct { value: ExprId, binding: ?base.SymbolId, handler: CatchHandler, span: base.Span },
     unsupported: base.Span,
@@ -78,6 +80,30 @@ pub const CatchHandler = union(enum) {
 pub const StructLiteralField = struct {
     name: base.SymbolId,
     value: ?ExprId,
+    span: base.Span,
+};
+
+pub const Pattern = union(enum) {
+    wildcard: base.Span,
+    binding: struct { name: base.SymbolId, span: base.Span },
+    int_literal: base.Span,
+    string_literal: base.Span,
+    path: struct { segments: base.Range, span: base.Span },
+    tuple: struct { path: base.Range, args: base.Range, span: base.Span },
+    range: struct { start: PatternId, end: PatternId, inclusive: bool, span: base.Span },
+    or_pattern: struct { patterns: base.Range, span: base.Span },
+    unsupported: base.Span,
+};
+
+pub const MatchArmBody = union(enum) {
+    expr: ExprId,
+    block: BlockId,
+};
+
+pub const MatchArm = struct {
+    pattern: PatternId,
+    guard: ?ExprId,
+    body: MatchArmBody,
     span: base.Span,
 };
 
@@ -122,6 +148,9 @@ pub const Hir = struct {
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
     struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
+    patterns: std.ArrayListUnmanaged(Pattern) = .empty,
+    pattern_args: std.ArrayListUnmanaged(PatternId) = .empty,
+    match_arms: std.ArrayListUnmanaged(MatchArm) = .empty,
 
     pub fn init(allocator: Allocator, source: base.SourceId) Hir {
         return .{ .allocator = allocator, .source = source };
@@ -137,6 +166,9 @@ pub const Hir = struct {
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
         self.struct_literal_fields.deinit(self.allocator);
+        self.patterns.deinit(self.allocator);
+        self.pattern_args.deinit(self.allocator);
+        self.match_arms.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -331,6 +363,11 @@ fn lowerExpr(hir: *Hir, ast: *const parser.Ast, expr_id: parser.ExprId) Allocato
             .else_block = if (if_expr.else_block) |else_block| try lowerBlock(hir, ast, else_block) else null,
             .span = if_expr.span,
         } },
+        .match_expr => |match_expr| .{ .match_expr = .{
+            .value = try lowerExpr(hir, ast, match_expr.value),
+            .arms = try lowerMatchArms(hir, ast, match_expr.arms),
+            .span = match_expr.span,
+        } },
         .try_expr => |try_expr| .{ .try_expr = .{
             .value = try lowerExpr(hir, ast, try_expr.value),
             .span = try_expr.span,
@@ -341,7 +378,6 @@ fn lowerExpr(hir: *Hir, ast: *const parser.Ast, expr_id: parser.ExprId) Allocato
             .handler = try lowerCatchHandler(hir, ast, catch_expr.handler),
             .span = catch_expr.span,
         } },
-        else => .{ .unsupported = expr.span() },
     };
 
     const lowered_id: ExprId = @intCast(hir.exprs.items.len);
@@ -395,6 +431,69 @@ fn lowerCatchHandler(hir: *Hir, ast: *const parser.Ast, handler: parser.ast.Catc
         .expr => |expr| .{ .expr = try lowerExpr(hir, ast, expr) },
         .block => |block| .{ .block = try lowerBlock(hir, ast, block) },
     };
+}
+
+fn lowerMatchArms(hir: *Hir, ast: *const parser.Ast, arms: base.Range) Allocator.Error!base.Range {
+    const arms_start: u32 = @intCast(hir.match_arms.items.len);
+    const start: usize = @intCast(arms.start);
+    const end: usize = @intCast(arms.end());
+    for (ast.match_arms.items[start..end]) |arm| {
+        try hir.match_arms.append(hir.allocator, .{
+            .pattern = try lowerPattern(hir, ast, arm.pattern),
+            .guard = if (arm.guard) |guard| try lowerExpr(hir, ast, guard) else null,
+            .body = try lowerMatchArmBody(hir, ast, arm.body),
+            .span = arm.span,
+        });
+    }
+    return .{ .start = arms_start, .len = @intCast(hir.match_arms.items.len - arms_start) };
+}
+
+fn lowerMatchArmBody(hir: *Hir, ast: *const parser.Ast, body: parser.MatchArmBody) Allocator.Error!MatchArmBody {
+    return switch (body) {
+        .expr => |expr| .{ .expr = try lowerExpr(hir, ast, expr) },
+        .block => |block| .{ .block = try lowerBlock(hir, ast, block) },
+    };
+}
+
+fn lowerPattern(hir: *Hir, ast: *const parser.Ast, pattern_id: parser.PatternId) Allocator.Error!PatternId {
+    const pattern = ast.patterns.items[pattern_id];
+    const lowered: Pattern = switch (pattern) {
+        .wildcard => |span| .{ .wildcard = span },
+        .binding => |binding| .{ .binding = .{ .name = binding.name, .span = binding.span } },
+        .int_literal => |span| .{ .int_literal = span },
+        .string_literal => |span| .{ .string_literal = span },
+        .path => |path| .{ .path = .{ .segments = path.segments, .span = path.span } },
+        .tuple => |tuple| .{ .tuple = .{
+            .path = tuple.path,
+            .args = try lowerPatternRange(hir, ast, tuple.args),
+            .span = tuple.span,
+        } },
+        .range => |range| .{ .range = .{
+            .start = try lowerPattern(hir, ast, range.start),
+            .end = try lowerPattern(hir, ast, range.end),
+            .inclusive = range.inclusive,
+            .span = range.span,
+        } },
+        .or_pattern => |or_pattern| .{ .or_pattern = .{
+            .patterns = try lowerPatternRange(hir, ast, or_pattern.patterns),
+            .span = or_pattern.span,
+        } },
+        else => .{ .unsupported = pattern.span() },
+    };
+
+    const lowered_id: PatternId = @intCast(hir.patterns.items.len);
+    try hir.patterns.append(hir.allocator, lowered);
+    return lowered_id;
+}
+
+fn lowerPatternRange(hir: *Hir, ast: *const parser.Ast, patterns: base.Range) Allocator.Error!base.Range {
+    const patterns_start: u32 = @intCast(hir.pattern_args.items.len);
+    const start: usize = @intCast(patterns.start);
+    const end: usize = @intCast(patterns.end());
+    for (ast.pattern_args.items[start..end]) |pattern| {
+        try hir.pattern_args.append(hir.allocator, try lowerPattern(hir, ast, pattern));
+    }
+    return .{ .start = patterns_start, .len = @intCast(hir.pattern_args.items.len - patterns_start) };
 }
 
 fn lowerUnsupportedExpr(hir: *Hir, span: base.Span) Allocator.Error!ExprId {
@@ -618,6 +717,30 @@ fn dumpExpr(
                 try dumpBlock(writer, hir, interner, else_block, indent + 2);
             }
         },
+        .match_expr => |match_expr| {
+            try writer.writeAll("Match\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Value\n");
+            try dumpExpr(writer, hir, interner, match_expr.value, indent + 2);
+            const start: usize = @intCast(match_expr.arms.start);
+            const end: usize = @intCast(match_expr.arms.end());
+            for (hir.match_arms.items[start..end]) |arm| {
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("Arm\n");
+                try dumpPattern(writer, hir, interner, arm.pattern, indent + 2);
+                if (arm.guard) |guard| {
+                    try writeIndent(writer, indent + 2);
+                    try writer.writeAll("Guard\n");
+                    try dumpExpr(writer, hir, interner, guard, indent + 3);
+                }
+                try writeIndent(writer, indent + 2);
+                try writer.writeAll("Body\n");
+                switch (arm.body) {
+                    .expr => |expr| try dumpExpr(writer, hir, interner, expr, indent + 3),
+                    .block => |block| try dumpBlock(writer, hir, interner, block, indent + 3),
+                }
+            }
+        },
         .try_expr => |try_expr| {
             try writer.writeAll("Try\n");
             try dumpExpr(writer, hir, interner, try_expr.value, indent + 1);
@@ -639,6 +762,51 @@ fn dumpExpr(
             }
         },
         .unsupported => try writer.writeAll("UnsupportedExpr\n"),
+    }
+}
+
+fn dumpPattern(
+    writer: *std.Io.Writer,
+    hir: *const Hir,
+    interner: *const base.Interner,
+    pattern_id: PatternId,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
+    switch (hir.patterns.items[pattern_id]) {
+        .wildcard => try writer.writeAll("Pattern Wildcard\n"),
+        .binding => |binding| try writer.print("Pattern Binding {s}\n", .{interner.get(binding.name) orelse "<missing>"}),
+        .int_literal => try writer.writeAll("Pattern IntLiteral\n"),
+        .string_literal => try writer.writeAll("Pattern StringLiteral\n"),
+        .path => |path| {
+            try writer.writeAll("Pattern Path ");
+            try dumpPath(writer, hir, interner, path.segments);
+            try writer.writeByte('\n');
+        },
+        .tuple => |tuple| {
+            try writer.writeAll("Pattern Tuple ");
+            try dumpPath(writer, hir, interner, tuple.path);
+            try writer.writeByte('\n');
+            const start: usize = @intCast(tuple.args.start);
+            const end: usize = @intCast(tuple.args.end());
+            for (hir.pattern_args.items[start..end]) |arg| {
+                try dumpPattern(writer, hir, interner, arg, indent + 1);
+            }
+        },
+        .range => |range| {
+            try writer.print("Pattern Range {s}\n", .{if (range.inclusive) "inclusive" else "exclusive"});
+            try dumpPattern(writer, hir, interner, range.start, indent + 1);
+            try dumpPattern(writer, hir, interner, range.end, indent + 1);
+        },
+        .or_pattern => |or_pattern| {
+            try writer.writeAll("Pattern Or\n");
+            const start: usize = @intCast(or_pattern.patterns.start);
+            const end: usize = @intCast(or_pattern.patterns.end());
+            for (hir.pattern_args.items[start..end]) |pattern| {
+                try dumpPattern(writer, hir, interner, pattern, indent + 1);
+            }
+        },
+        .unsupported => try writer.writeAll("Pattern Unsupported\n"),
     }
 }
 
