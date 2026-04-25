@@ -21,6 +21,7 @@ pub const Op = enum {
     builtin_assert,
     array_new,
     index_get,
+    struct_new,
     add,
     sub,
     mul,
@@ -59,6 +60,10 @@ pub const StringConstant = struct {
     bytes: []const u8,
 };
 
+pub const StructLayout = struct {
+    fields: base.Range,
+};
+
 const CompileContext = struct {
     bytecode: *BytecodeModule,
     module: *const hir.Hir,
@@ -93,6 +98,8 @@ pub const BytecodeModule = struct {
     float_constants: std.ArrayListUnmanaged(f64) = .empty,
     char_constants: std.ArrayListUnmanaged(u21) = .empty,
     string_constants: std.ArrayListUnmanaged(StringConstant) = .empty,
+    struct_layouts: std.ArrayListUnmanaged(StructLayout) = .empty,
+    struct_field_names: std.ArrayListUnmanaged(base.SymbolId) = .empty,
 
     pub fn init(allocator: Allocator) BytecodeModule {
         return .{ .allocator = allocator };
@@ -106,6 +113,8 @@ pub const BytecodeModule = struct {
         self.float_constants.deinit(self.allocator);
         self.char_constants.deinit(self.allocator);
         self.string_constants.deinit(self.allocator);
+        self.struct_layouts.deinit(self.allocator);
+        self.struct_field_names.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -339,9 +348,32 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
             try compileExpr(context, index.index);
             try emit(bytecode, .index_get, 0);
         },
+        .struct_literal => |literal| try compileStructLiteral(context, literal),
         .if_expr => |if_expr| try compileIfExpr(context, if_expr),
         else => try emit(bytecode, .unsupported, 0),
     }
+}
+
+fn compileStructLiteral(context: *CompileContext, literal: anytype) CompileError!void {
+    const bytecode = context.bytecode;
+    const module = context.module;
+    const names_start: u32 = @intCast(bytecode.struct_field_names.items.len);
+    const start: usize = @intCast(literal.fields.start);
+    const end: usize = @intCast(literal.fields.end());
+    for (module.struct_literal_fields.items[start..end]) |field| {
+        try bytecode.struct_field_names.append(bytecode.allocator, field.name);
+        if (field.value) |value| {
+            try compileExpr(context, value);
+        } else {
+            try emit(bytecode, .get_name, field.name);
+        }
+    }
+
+    const layout_index: u32 = @intCast(bytecode.struct_layouts.items.len);
+    try bytecode.struct_layouts.append(bytecode.allocator, .{
+        .fields = .{ .start = names_start, .len = @intCast(bytecode.struct_field_names.items.len - names_start) },
+    });
+    try emit(bytecode, .struct_new, layout_index);
 }
 
 fn compileIfExpr(context: *CompileContext, if_expr: anytype) CompileError!void {
@@ -483,7 +515,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
             switch (instruction.op) {
                 .get_name, .get_field => try output.writer.print(" {s}", .{interner.get(instruction.operand) orelse "<missing>"}),
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
-                .call, .call_function, .builtin_assert, .array_new, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
+                .call, .call_function, .builtin_assert, .array_new, .struct_new, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_float => try output.writer.print(" {d}", .{bytecode.float_constants.items[instruction.operand]}),
                 .constant_char => try output.writer.print(" '{c}'", .{@as(u8, @intCast(bytecode.char_constants.items[instruction.operand]))}),

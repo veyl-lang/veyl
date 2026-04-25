@@ -1,4 +1,5 @@
 const std = @import("std");
+const base = @import("../base.zig");
 const bytecode = @import("../bytecode.zig");
 
 const Allocator = std.mem.Allocator;
@@ -11,6 +12,16 @@ pub const Value = union(enum) {
     char: u21,
     string: []const u8,
     array: []Value,
+    struct_object: *StructObject,
+};
+
+pub const StructField = struct {
+    name: base.SymbolId,
+    value: Value,
+};
+
+pub const StructObject = struct {
+    fields: []StructField,
 };
 
 pub const VmError = error{
@@ -27,6 +38,7 @@ pub const Vm = struct {
     allocator: Allocator,
     stack: std.ArrayListUnmanaged(Value) = .empty,
     arrays: std.ArrayListUnmanaged([]Value) = .empty,
+    structs: std.ArrayListUnmanaged(*StructObject) = .empty,
 
     pub fn init(allocator: Allocator) Vm {
         return .{ .allocator = allocator };
@@ -35,6 +47,11 @@ pub const Vm = struct {
     pub fn deinit(self: *Vm) void {
         for (self.arrays.items) |array| self.allocator.free(array);
         self.arrays.deinit(self.allocator);
+        for (self.structs.items) |object| {
+            self.allocator.free(object.fields);
+            self.allocator.destroy(object);
+        }
+        self.structs.deinit(self.allocator);
         self.stack.deinit(self.allocator);
         self.* = undefined;
     }
@@ -78,6 +95,8 @@ pub const Vm = struct {
                 .builtin_assert => try self.assertBuiltin(instruction.operand),
                 .array_new => try self.arrayNew(instruction.operand),
                 .index_get => try self.indexGet(),
+                .struct_new => try self.structNew(module, instruction.operand),
+                .get_field => try self.fieldGet(instruction.operand),
                 .add => try self.binaryNumber(.add),
                 .sub => try self.binaryNumber(.sub),
                 .mul => try self.binaryNumber(.mul),
@@ -150,13 +169,13 @@ pub const Vm = struct {
 
     fn indexGet(self: *Vm) VmError!void {
         const index_value = try self.pop();
-        const base = try self.pop();
+        const base_value = try self.pop();
         const index = switch (index_value) {
             .int => |value| value,
             else => return error.TypeMismatch,
         };
         if (index < 0) return error.TypeMismatch;
-        switch (base) {
+        switch (base_value) {
             .array => |values| {
                 const array_index: usize = @intCast(index);
                 if (array_index >= values.len) return error.TypeMismatch;
@@ -164,6 +183,43 @@ pub const Vm = struct {
             },
             else => return error.TypeMismatch,
         }
+    }
+
+    fn structNew(self: *Vm, module: *const bytecode.BytecodeModule, layout_index: u32) VmError!void {
+        const layout = module.struct_layouts.items[layout_index];
+        const field_count: usize = @intCast(layout.fields.len);
+        const fields = try self.allocator.alloc(StructField, field_count);
+        errdefer self.allocator.free(fields);
+
+        var remaining = field_count;
+        while (remaining != 0) {
+            remaining -= 1;
+            fields[remaining] = .{
+                .name = module.struct_field_names.items[layout.fields.start + remaining],
+                .value = try self.pop(),
+            };
+        }
+
+        const object = try self.allocator.create(StructObject);
+        errdefer self.allocator.destroy(object);
+        object.* = .{ .fields = fields };
+        try self.structs.append(self.allocator, object);
+        try self.stack.append(self.allocator, .{ .struct_object = object });
+    }
+
+    fn fieldGet(self: *Vm, name: base.SymbolId) VmError!void {
+        const base_value = try self.pop();
+        const object = switch (base_value) {
+            .struct_object => |value| value,
+            else => return error.TypeMismatch,
+        };
+        for (object.fields) |field| {
+            if (field.name == name) {
+                try self.stack.append(self.allocator, field.value);
+                return;
+            }
+        }
+        return error.TypeMismatch;
     }
 
     fn binaryNumber(self: *Vm, op: bytecode.Op) VmError!void {
