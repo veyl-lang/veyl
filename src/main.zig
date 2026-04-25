@@ -46,7 +46,8 @@ fn fmtFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
         std.process.exit(1);
     }
 
-    const formatted = try veyl.fmt.formatAst(allocator, &compilation.tree.?, &compilation.interner);
+    const source = compilation.sources.file(compilation.source_id).?.text;
+    const formatted = try veyl.fmt.formatAst(allocator, &compilation.tree.?, &compilation.interner, source);
     defer allocator.free(formatted);
     try writeStdout(io, formatted);
 }

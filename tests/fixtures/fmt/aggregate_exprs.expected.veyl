@@ -1,0 +1,6 @@
+fn aggregate(id: UserId, name: Str) -> User {
+    let values = [1, 2, 3];
+    let first = values[0];
+    let user = User { id, name: "Ada", active: true, initial: 'A' };
+    user
+}
