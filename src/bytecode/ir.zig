@@ -225,11 +225,7 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
             try compileExpr(context, field.base);
             try emit(bytecode, .get_field, field.name);
         },
-        .binary => |binary| {
-            try compileExpr(context, binary.left);
-            try compileExpr(context, binary.right);
-            try emit(bytecode, binaryOp(binary.op), 0);
-        },
+        .binary => |binary| try compileBinaryExpr(context, binary),
         .call => |call| {
             switch (module.exprs.items[call.callee]) {
                 .name => |callee| {
@@ -273,6 +269,28 @@ fn compileIfExpr(context: *CompileContext, if_expr: anytype) CompileError!void {
         try emit(bytecode, .unit, 0);
     }
     bytecode.instructions.items[jump_to_end].operand = @intCast(bytecode.instructions.items.len);
+}
+
+fn compileBinaryExpr(context: *CompileContext, binary: anytype) CompileError!void {
+    const bytecode = context.bytecode;
+    const module = context.module;
+    if (binary.op == .assign) {
+        switch (module.exprs.items[binary.left]) {
+            .name => |name| {
+                if (context.locals.get(name.symbol)) |slot| {
+                    try compileExpr(context, binary.right);
+                    try emit(bytecode, .store_local, slot);
+                    try emit(bytecode, .load_local, slot);
+                    return;
+                }
+            },
+            else => {},
+        }
+    }
+
+    try compileExpr(context, binary.left);
+    try compileExpr(context, binary.right);
+    try emit(bytecode, binaryOp(binary.op), 0);
 }
 
 fn compileBlockValue(context: *CompileContext, block_id: hir.ir.BlockId) CompileError!void {
