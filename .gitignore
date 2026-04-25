@@ -1,0 +1,31 @@
+# zig
+.zig-cache/
+zig-out/
+*.o
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+Desktop.ini
+
+# agent
+.agents/
+.claude/
+.codex/
+.cursor/
+.windsurf/
+.continue/
+.roo/
+.kiro/
+.gemini/
+.aider/
+.codeium/
+.opencode/
+docs/agent/
+skills-lock.json
+AGENTS.md
+
+# mise
+.mise.local.toml
