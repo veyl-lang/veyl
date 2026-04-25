@@ -1,0 +1,5 @@
+error: arithmetic operands must be numeric
+  --> non_numeric_arithmetic.veyl:2:17
+   |
+  2 |     let value = 1 + true;
+   |                 ^^^^^^^^

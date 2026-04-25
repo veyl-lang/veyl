@@ -69,7 +69,8 @@ fn checkStmt(module: *const hir.Hir, stmt: hir.ir.Stmt, diagnostics: *diag.Diagn
 fn checkCondition(module: *const hir.Hir, condition: hir.ir.ControlCondition, diagnostics: *diag.DiagnosticBag) CheckError!void {
     switch (condition) {
         .expr => |expr| {
-            if (try inferExpr(module, expr, diagnostics) != .bool) {
+            const condition_type = try inferExpr(module, expr, diagnostics);
+            if (condition_type != .unknown and condition_type != .bool) {
                 try diagnostics.add(.{
                     .severity = .err,
                     .span = exprSpan(module, expr),
@@ -91,10 +92,7 @@ fn inferExpr(module: *const hir.Hir, expr_id: hir.ir.ExprId, diagnostics: *diag.
         .char_literal => .char,
         .bool_literal => .bool,
         .unit_literal => .unit,
-        .binary => |binary| switch (binary.op) {
-            .equal, .not_equal, .less, .less_equal, .greater, .greater_equal => .bool,
-            else => try inferExpr(module, binary.left, diagnostics),
-        },
+        .binary => |binary| try inferBinaryExpr(module, binary, diagnostics),
         .if_expr => |if_expr| {
             try checkCondition(module, if_expr.condition, diagnostics);
             try checkBlock(module, if_expr.then_block, diagnostics);
@@ -113,6 +111,72 @@ fn inferExpr(module: *const hir.Hir, expr_id: hir.ir.ExprId, diagnostics: *diag.
         .catch_expr => |catch_expr| try inferExpr(module, catch_expr.value, diagnostics),
         .array_literal, .struct_literal, .index, .field, .call, .name, .unsupported => .unknown,
     };
+}
+
+fn inferBinaryExpr(module: *const hir.Hir, binary: anytype, diagnostics: *diag.DiagnosticBag) CheckError!Type {
+    const left_type = try inferExpr(module, binary.left, diagnostics);
+    const right_type = try inferExpr(module, binary.right, diagnostics);
+
+    switch (binary.op) {
+        .add, .sub, .mul, .div, .rem, .add_assign, .sub_assign, .mul_assign, .div_assign, .rem_assign => {
+            if (left_type == .unknown or right_type == .unknown) return .unknown;
+            if (!isNumeric(left_type) or !isNumeric(right_type)) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = binary.span,
+                    .message = "arithmetic operands must be numeric",
+                });
+                return .unknown;
+            }
+            if (left_type != right_type) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = binary.span,
+                    .message = "arithmetic operands must have matching types",
+                });
+                return .unknown;
+            }
+            return left_type;
+        },
+        .logical_or, .logical_and => {
+            if (left_type == .unknown or right_type == .unknown) return .unknown;
+            if (left_type != .bool or right_type != .bool) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = binary.span,
+                    .message = "logical operands must be Bool",
+                });
+                return .unknown;
+            }
+            return .bool;
+        },
+        .less, .less_equal, .greater, .greater_equal => {
+            if (left_type == .unknown or right_type == .unknown) return .bool;
+            if (!isNumeric(left_type) or !isNumeric(right_type) or left_type != right_type) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = binary.span,
+                    .message = "comparison operands must be matching numeric types",
+                });
+            }
+            return .bool;
+        },
+        .equal, .not_equal => {
+            if (left_type != .unknown and right_type != .unknown and left_type != right_type) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = binary.span,
+                    .message = "equality operands must have matching types",
+                });
+            }
+            return .bool;
+        },
+        .assign => return left_type,
+    }
+}
+
+fn isNumeric(value_type: Type) bool {
+    return value_type == .int or value_type == .float;
 }
 
 fn exprSpan(module: *const hir.Hir, expr_id: hir.ir.ExprId) @import("../base.zig").Span {
