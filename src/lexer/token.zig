@@ -1,0 +1,130 @@
+const base = @import("../base.zig");
+
+pub const Token = struct {
+    kind: TokenKind,
+    span: base.Span,
+};
+
+pub const TokenKind = enum {
+    identifier,
+    int_literal,
+    float_literal,
+    string_literal,
+    char_literal,
+
+    line_comment,
+    block_comment,
+    doc_line_comment,
+    doc_block_comment,
+    module_doc_comment,
+
+    keyword_import,
+    keyword_pub,
+    keyword_private,
+    keyword_as,
+    keyword_struct,
+    keyword_enum,
+    keyword_type,
+    keyword_interface,
+    keyword_impl,
+    keyword_where,
+    keyword_fn,
+    keyword_return,
+    keyword_let,
+    keyword_mut,
+    keyword_const,
+    keyword_if,
+    keyword_else,
+    keyword_match,
+    keyword_for,
+    keyword_in,
+    keyword_while,
+    keyword_break,
+    keyword_continue,
+    keyword_try,
+    keyword_catch,
+    keyword_defer,
+    keyword_test,
+    keyword_self,
+    keyword_Self,
+    keyword_true,
+    keyword_false,
+    keyword_async,
+    keyword_await,
+    keyword_spawn,
+    keyword_yield,
+    keyword_macro,
+    keyword_resource,
+
+    l_paren,
+    r_paren,
+    l_brace,
+    r_brace,
+    l_bracket,
+    r_bracket,
+    comma,
+    colon,
+    semicolon,
+    dot,
+    dot_dot,
+    dot_dot_equal,
+    arrow,
+    fat_arrow,
+    plus,
+    plus_equal,
+    minus,
+    minus_equal,
+    star,
+    star_equal,
+    slash,
+    slash_equal,
+    percent,
+    percent_equal,
+    equal,
+    equal_equal,
+    bang,
+    bang_equal,
+    less,
+    less_equal,
+    greater,
+    greater_equal,
+    pipe,
+    pipe_pipe,
+    amp,
+    amp_amp,
+    underscore,
+
+    invalid,
+    eof,
+};
+
+pub fn keywordKind(text: []const u8) ?TokenKind {
+    if (text.len == 0) return null;
+    return switch (text[0]) {
+        'S' => if (equal(text, "Self")) .keyword_Self else null,
+        'a' => if (equal(text, "as")) .keyword_as else if (equal(text, "async")) .keyword_async else if (equal(text, "await")) .keyword_await else null,
+        'b' => if (equal(text, "break")) .keyword_break else null,
+        'c' => if (equal(text, "const")) .keyword_const else if (equal(text, "catch")) .keyword_catch else if (equal(text, "continue")) .keyword_continue else null,
+        'd' => if (equal(text, "defer")) .keyword_defer else null,
+        'e' => if (equal(text, "enum")) .keyword_enum else if (equal(text, "else")) .keyword_else else null,
+        'f' => if (equal(text, "fn")) .keyword_fn else if (equal(text, "for")) .keyword_for else if (equal(text, "false")) .keyword_false else null,
+        'i' => if (equal(text, "import")) .keyword_import else if (equal(text, "impl")) .keyword_impl else if (equal(text, "interface")) .keyword_interface else if (equal(text, "if")) .keyword_if else if (equal(text, "in")) .keyword_in else null,
+        'l' => if (equal(text, "let")) .keyword_let else null,
+        'm' => if (equal(text, "mut")) .keyword_mut else if (equal(text, "match")) .keyword_match else if (equal(text, "macro")) .keyword_macro else null,
+        'p' => if (equal(text, "pub")) .keyword_pub else if (equal(text, "private")) .keyword_private else null,
+        'r' => if (equal(text, "return")) .keyword_return else if (equal(text, "resource")) .keyword_resource else null,
+        's' => if (equal(text, "struct")) .keyword_struct else if (equal(text, "self")) .keyword_self else if (equal(text, "spawn")) .keyword_spawn else null,
+        't' => if (equal(text, "type")) .keyword_type else if (equal(text, "try")) .keyword_try else if (equal(text, "test")) .keyword_test else if (equal(text, "true")) .keyword_true else null,
+        'w' => if (equal(text, "where")) .keyword_where else if (equal(text, "while")) .keyword_while else null,
+        'y' => if (equal(text, "yield")) .keyword_yield else null,
+        else => null,
+    };
+}
+
+fn equal(a: []const u8, b: []const u8) bool {
+    if (a.len != b.len) return false;
+    for (a, b) |left, right| {
+        if (left != right) return false;
+    }
+    return true;
+}
