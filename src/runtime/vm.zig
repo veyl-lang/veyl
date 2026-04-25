@@ -8,6 +8,7 @@ pub const Value = union(enum) {
     bool: bool,
     int: i64,
     float: f64,
+    char: u21,
     string: []const u8,
 };
 
@@ -64,6 +65,7 @@ pub const Vm = struct {
                 .unit => try self.stack.append(self.allocator, .unit),
                 .constant_int => try self.stack.append(self.allocator, .{ .int = module.int_constants.items[instruction.operand] }),
                 .constant_float => try self.stack.append(self.allocator, .{ .float = module.float_constants.items[instruction.operand] }),
+                .constant_char => try self.stack.append(self.allocator, .{ .char = module.char_constants.items[instruction.operand] }),
                 .constant_string => try self.stack.append(self.allocator, .{ .string = module.string_constants.items[instruction.operand].bytes }),
                 .constant_bool => try self.stack.append(self.allocator, .{ .bool = instruction.operand != 0 }),
                 .load_local => try self.stack.append(self.allocator, locals[instruction.operand]),

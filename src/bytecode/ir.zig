@@ -89,6 +89,7 @@ pub const BytecodeModule = struct {
     instructions: std.ArrayListUnmanaged(Instruction) = .empty,
     int_constants: std.ArrayListUnmanaged(i64) = .empty,
     float_constants: std.ArrayListUnmanaged(f64) = .empty,
+    char_constants: std.ArrayListUnmanaged(u21) = .empty,
     string_constants: std.ArrayListUnmanaged(StringConstant) = .empty,
 
     pub fn init(allocator: Allocator) BytecodeModule {
@@ -101,12 +102,13 @@ pub const BytecodeModule = struct {
         self.instructions.deinit(self.allocator);
         self.int_constants.deinit(self.allocator);
         self.float_constants.deinit(self.allocator);
+        self.char_constants.deinit(self.allocator);
         self.string_constants.deinit(self.allocator);
         self.* = undefined;
     }
 };
 
-pub const CompileError = Allocator.Error || error{InvalidIntegerLiteral};
+pub const CompileError = Allocator.Error || error{ InvalidIntegerLiteral, InvalidCharLiteral };
 
 pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const u8, interner: *const base.Interner) CompileError!BytecodeModule {
     var bytecode = BytecodeModule.init(allocator);
@@ -275,7 +277,7 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
         .int_literal => |span| try emitIntConstant(bytecode, context.source, span),
         .float_literal => |span| try emitFloatConstant(bytecode, context.source, span),
         .string_literal => |span| try emitStringConstant(bytecode, context.source, span),
-        .char_literal => try emit(bytecode, .constant_char, 0),
+        .char_literal => |span| try emitCharConstant(bytecode, context.source, span),
         .bool_literal => |bool_literal| try emit(bytecode, .constant_bool, if (bool_literal.value) 1 else 0),
         .unit_literal => try emit(bytecode, .unit, 0),
         .name => |name| {
@@ -430,6 +432,16 @@ fn emitFloatConstant(bytecode: *BytecodeModule, source: []const u8, span: base.S
     try emit(bytecode, .constant_float, index);
 }
 
+fn emitCharConstant(bytecode: *BytecodeModule, source: []const u8, span: base.Span) CompileError!void {
+    const start: usize = @intCast(span.start + 1);
+    const end: usize = @intCast(span.end() - 1);
+    const bytes = source[start..end];
+    if (bytes.len != 1) return error.InvalidCharLiteral;
+    const index: u32 = @intCast(bytecode.char_constants.items.len);
+    try bytecode.char_constants.append(bytecode.allocator, bytes[0]);
+    try emit(bytecode, .constant_char, index);
+}
+
 fn emitStringConstant(bytecode: *BytecodeModule, source: []const u8, span: base.Span) CompileError!void {
     const start: usize = @intCast(span.start + 1);
     const end: usize = @intCast(span.end() - 1);
@@ -459,6 +471,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
                 .call, .call_function, .builtin_assert, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_float => try output.writer.print(" {d}", .{bytecode.float_constants.items[instruction.operand]}),
+                .constant_char => try output.writer.print(" '{c}'", .{@as(u8, @intCast(bytecode.char_constants.items[instruction.operand]))}),
                 .constant_string => try output.writer.print(" \"{s}\"", .{bytecode.string_constants.items[instruction.operand].bytes}),
                 .constant_bool => try output.writer.print(" {}", .{instruction.operand != 0}),
                 else => {},
