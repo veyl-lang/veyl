@@ -498,6 +498,10 @@ const Parser = struct {
 
     fn parseBlock(self: *Parser) Allocator.Error!ast_mod.BlockId {
         const open = (try self.expect(.l_brace, "expected function body")) orelse return self.emptyBlock(self.peek().span);
+        return self.parseBlockFromOpen(open);
+    }
+
+    fn parseBlockFromOpen(self: *Parser, open: lexer.Token) Allocator.Error!ast_mod.BlockId {
         var block_stmt_ids: std.ArrayListUnmanaged(ast_mod.StmtId) = .empty;
         defer block_stmt_ids.deinit(self.tree.allocator);
         var final_expr: ?ast_mod.ExprId = null;
@@ -910,6 +914,13 @@ const Parser = struct {
             .keyword_match => return self.parseMatchExpr(token.span),
             .keyword_try => return self.parseTryExpr(token.span),
             .l_bracket => return self.parseArrayLiteral(token.span),
+            .l_brace => {
+                const block = try self.parseBlockFromOpen(token);
+                return self.tree.addExpr(.{ .block_expr = .{
+                    .block = block,
+                    .span = self.tree.blocks.items[block].span,
+                } });
+            },
             .l_paren => {
                 if (self.match(.r_paren)) |close| {
                     return self.tree.addExpr(.{ .unit_literal = base.Span.join(token.span, close.span) });

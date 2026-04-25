@@ -167,6 +167,7 @@ pub const Expr = union(enum) {
     index: struct { base: ExprId, index: ExprId, span: base.Span },
     array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
+    block_expr: struct { block: BlockId, span: base.Span },
     if_expr: struct { condition: ControlCondition, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
     match_expr: MatchExpr,
     try_expr: TryExpr,
@@ -187,6 +188,7 @@ pub const Expr = union(enum) {
             .index => |expr| expr.span,
             .array_literal => |expr| expr.span,
             .struct_literal => |expr| expr.span,
+            .block_expr => |expr| expr.span,
             .if_expr => |expr| expr.span,
             .match_expr => |expr| expr.span,
             .try_expr => |expr| expr.span,
@@ -947,6 +949,10 @@ fn dumpExpr(
                     try dumpExpr(writer, ast, interner, value, indent + 2);
                 }
             }
+        },
+        .block_expr => |block_expr| {
+            try writer.writeAll("BlockExpr\n");
+            try dumpBlock(writer, ast, interner, ast.blocks.items[block_expr.block], indent + 1);
         },
         .if_expr => |if_expr| {
             try writer.writeAll("IfExpr\n");

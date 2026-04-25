@@ -1,0 +1,17 @@
+Root
+  FnDecl package compute
+    Return Int
+    Block
+      LetStmt value
+        BlockExpr
+          Block
+            LetStmt a
+              IntLiteral
+            LetStmt b
+              IntLiteral
+            FinalExpr
+              Binary add
+                Name a
+                Name b
+      FinalExpr
+        Name value
