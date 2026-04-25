@@ -1,0 +1,22 @@
+import std.fs
+pub struct User {
+    name: Str,
+}
+enum Status {
+    Ready,
+}
+type UserId = Int;
+interface Reader {
+    fn read(self) -> Bytes;
+}
+impl User {
+    fn display_name(self) -> Str {
+        self.name
+    }
+}
+fn main() {
+    print("hello");
+}
+test "smoke" {
+    assert(true);
+}

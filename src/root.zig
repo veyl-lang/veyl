@@ -1,6 +1,7 @@
 pub const base = @import("base.zig");
 pub const diag = @import("diag.zig");
 pub const fmt = @import("fmt.zig");
+pub const hir = @import("hir.zig");
 pub const host = @import("host.zig");
 pub const lexer = @import("lexer.zig");
 pub const parser = @import("parser.zig");
@@ -11,6 +12,7 @@ test {
     _ = base;
     _ = diag;
     _ = fmt;
+    _ = hir;
     _ = host;
     _ = lexer;
     _ = parser;

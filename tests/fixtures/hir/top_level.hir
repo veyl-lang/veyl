@@ -1,0 +1,9 @@
+HirRoot
+  Import package std.fs
+  Struct public User
+  Enum package Status
+  TypeAlias package UserId
+  Interface package Reader
+  Impl package methods=1
+  Function package main params=0
+  Test

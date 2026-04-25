@@ -27,6 +27,8 @@ pub fn main(init: std.process.Init) !void {
             try dumpTokens(io, allocator, path);
         } else if (std.mem.eql(u8, kind, "ast")) {
             try dumpAst(io, allocator, path);
+        } else if (std.mem.eql(u8, kind, "hir")) {
+            try dumpHir(io, allocator, path);
         } else {
             try usage(io);
         }
@@ -87,6 +89,23 @@ fn dumpAst(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     }
 
     const dumped = try veyl.parser.dumpAst(allocator, &compilation.tree.?, &compilation.interner);
+    defer allocator.free(dumped);
+    try writeStdout(io, dumped);
+}
+
+fn dumpHir(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
+    var compilation = try parseFile(io, allocator, path);
+    defer compilation.deinit();
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    var hir = try veyl.hir.lowerAst(allocator, &compilation.tree.?);
+    defer hir.deinit();
+
+    const dumped = try veyl.hir.dumpHir(allocator, &hir, &compilation.interner);
     defer allocator.free(dumped);
     try writeStdout(io, dumped);
 }
@@ -174,6 +193,7 @@ fn usage(io: std.Io) !void {
         \\  veyl fmt <file>
         \\  veyl dump tokens <file>
         \\  veyl dump ast <file>
+        \\  veyl dump hir <file>
         \\  veyl version
         \\
     );
