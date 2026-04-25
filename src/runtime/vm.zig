@@ -14,6 +14,7 @@ pub const VmError = error{
     EmptyModule,
     StackUnderflow,
     InvalidFunctionIndex,
+    AssertionFailed,
     TypeMismatch,
     IntegerDivideByZero,
     UnsupportedInstruction,
@@ -56,6 +57,7 @@ pub const Vm = struct {
                 .load_local => try self.stack.append(self.allocator, locals[instruction.operand]),
                 .store_local => locals[instruction.operand] = try self.pop(),
                 .call_function => try self.callFunction(module, instruction.operand),
+                .builtin_assert => try self.assertBuiltin(instruction.operand),
                 .add => try self.binaryInt(.add),
                 .sub => try self.binaryInt(.sub),
                 .mul => try self.binaryInt(.mul),
@@ -103,6 +105,12 @@ pub const Vm = struct {
             args[remaining] = try self.pop();
         }
         try self.stack.append(self.allocator, try self.runFunction(module, function, args));
+    }
+
+    fn assertBuiltin(self: *Vm, arg_count: u32) VmError!void {
+        if (arg_count != 1) return error.TypeMismatch;
+        if (!try self.popBool()) return error.AssertionFailed;
+        try self.stack.append(self.allocator, .unit);
     }
 
     fn binaryInt(self: *Vm, op: bytecode.Op) VmError!void {

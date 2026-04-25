@@ -18,6 +18,7 @@ pub const Op = enum {
     get_field,
     call,
     call_function,
+    builtin_assert,
     add,
     sub,
     mul,
@@ -59,6 +60,7 @@ const CompileContext = struct {
     bytecode: *BytecodeModule,
     module: *const hir.Hir,
     source: []const u8,
+    interner: *const base.Interner,
     locals: std.AutoHashMapUnmanaged(base.SymbolId, u32) = .empty,
     break_patches: std.ArrayListUnmanaged(u32) = .empty,
     continue_target: ?u32 = null,
@@ -111,12 +113,12 @@ pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const 
 
     for (module.decls.items) |decl| {
         switch (decl) {
-            .function => |function| try compileFunction(&bytecode, module, source, function),
+            .function => |function| try compileFunction(&bytecode, module, source, interner, function),
             .impl_decl => |impl_decl| {
                 const start: usize = @intCast(impl_decl.methods.start);
                 const end: usize = @intCast(impl_decl.methods.end());
                 for (module.impl_methods.items[start..end]) |method| {
-                    try compileFunction(&bytecode, module, source, method);
+                    try compileFunction(&bytecode, module, source, interner, method);
                 }
             },
             else => {},
@@ -146,8 +148,8 @@ fn predeclareFunctions(bytecode: *BytecodeModule, module: *const hir.Hir, intern
     }
 }
 
-fn compileFunction(bytecode: *BytecodeModule, module: *const hir.Hir, source: []const u8, function: hir.ir.FunctionDecl) CompileError!void {
-    var context = CompileContext{ .bytecode = bytecode, .module = module, .source = source };
+fn compileFunction(bytecode: *BytecodeModule, module: *const hir.Hir, source: []const u8, interner: *const base.Interner, function: hir.ir.FunctionDecl) CompileError!void {
+    var context = CompileContext{ .bytecode = bytecode, .module = module, .source = source, .interner = interner };
     defer context.deinit();
 
     const params_start: usize = @intCast(function.params.start);
@@ -272,6 +274,15 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
         .call => |call| {
             switch (module.exprs.items[call.callee]) {
                 .name => |callee| {
+                    if (std.mem.eql(u8, context.interner.get(callee.symbol) orelse "", "assert")) {
+                        const start: usize = @intCast(call.args.start);
+                        const end: usize = @intCast(call.args.end());
+                        for (module.expr_args.items[start..end]) |arg| {
+                            try compileExpr(context, arg);
+                        }
+                        try emit(bytecode, .builtin_assert, call.args.len);
+                        return;
+                    }
                     if (bytecode.function_names.get(callee.symbol)) |function_index| {
                         const start: usize = @intCast(call.args.start);
                         const end: usize = @intCast(call.args.end());
@@ -413,7 +424,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
             switch (instruction.op) {
                 .get_name, .get_field => try output.writer.print(" {s}", .{interner.get(instruction.operand) orelse "<missing>"}),
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
-                .call, .call_function, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
+                .call, .call_function, .builtin_assert, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_string => try output.writer.print(" \"{s}\"", .{bytecode.string_constants.items[instruction.operand].bytes}),
                 .constant_bool => try output.writer.print(" {}", .{instruction.operand != 0}),
