@@ -7,6 +7,7 @@ pub const Value = union(enum) {
     unit,
     bool: bool,
     int: i64,
+    string: []const u8,
 };
 
 pub const VmError = error{
@@ -50,6 +51,7 @@ pub const Vm = struct {
             switch (instruction.op) {
                 .unit => try self.stack.append(self.allocator, .unit),
                 .constant_int => try self.stack.append(self.allocator, .{ .int = module.int_constants.items[instruction.operand] }),
+                .constant_string => try self.stack.append(self.allocator, .{ .string = module.string_constants.items[instruction.operand].bytes }),
                 .constant_bool => try self.stack.append(self.allocator, .{ .bool = instruction.operand != 0 }),
                 .load_local => try self.stack.append(self.allocator, locals[instruction.operand]),
                 .store_local => locals[instruction.operand] = try self.pop(),
