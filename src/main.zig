@@ -124,7 +124,7 @@ fn dumpResolve(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void
     var hir = try veyl.hir.lowerAst(allocator, &compilation.tree.?);
     defer hir.deinit();
 
-    var resolved = try veyl.resolve.resolveModule(allocator, &hir, &compilation.diagnostics);
+    var resolved = try veyl.resolve.resolveModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
     defer resolved.deinit();
 
     if (compilation.diagnostics.hasErrors()) {

@@ -38,8 +38,13 @@ pub const NamedDecl = struct {
 pub const FunctionDecl = struct {
     visibility: parser.Visibility,
     name: base.SymbolId,
-    params_len: u32,
+    params: base.Range,
     body: BlockId,
+    span: base.Span,
+};
+
+pub const FunctionParam = struct {
+    name: base.SymbolId,
     span: base.Span,
 };
 
@@ -166,6 +171,7 @@ pub const Hir = struct {
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
     import_items: std.ArrayListUnmanaged(ImportItem) = .empty,
+    fn_params: std.ArrayListUnmanaged(FunctionParam) = .empty,
     impl_methods: std.ArrayListUnmanaged(FunctionDecl) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
@@ -186,6 +192,7 @@ pub const Hir = struct {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
         self.import_items.deinit(self.allocator);
+        self.fn_params.deinit(self.allocator);
         self.impl_methods.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
@@ -274,10 +281,20 @@ fn lowerFunctionDecl(hir: *Hir, ast: *const parser.Ast, fn_decl: parser.FnDecl) 
     return .{
         .visibility = fn_decl.visibility,
         .name = fn_decl.name,
-        .params_len = fn_decl.params.len,
+        .params = try lowerFunctionParams(hir, ast, fn_decl.params),
         .body = try lowerBlock(hir, ast, fn_decl.body),
         .span = fn_decl.span,
     };
+}
+
+fn lowerFunctionParams(hir: *Hir, ast: *const parser.Ast, params: base.Range) Allocator.Error!base.Range {
+    const params_start: u32 = @intCast(hir.fn_params.items.len);
+    const start: usize = @intCast(params.start);
+    const end: usize = @intCast(params.end());
+    for (ast.fn_params.items[start..end]) |param| {
+        try hir.fn_params.append(hir.allocator, .{ .name = param.name, .span = param.span });
+    }
+    return .{ .start = params_start, .len = @intCast(hir.fn_params.items.len - params_start) };
 }
 
 fn lowerImplMethods(hir: *Hir, ast: *const parser.Ast, methods: base.Range) Allocator.Error!base.Range {
@@ -597,7 +614,7 @@ pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Inte
                 try output.writer.print("  Function {s} {s} params={d}\n", .{
                     @tagName(function.visibility),
                     interner.get(function.name) orelse "<missing>",
-                    function.params_len,
+                    function.params.len,
                 });
                 try dumpBlock(&output.writer, hir, interner, function.body, 2);
             },
@@ -611,7 +628,7 @@ pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Inte
                     try output.writer.print("    Method {s} {s} params={d}\n", .{
                         @tagName(method.visibility),
                         interner.get(method.name) orelse "<missing>",
-                        method.params_len,
+                        method.params.len,
                     });
                     try dumpBlock(&output.writer, hir, interner, method.body, 3);
                 }
