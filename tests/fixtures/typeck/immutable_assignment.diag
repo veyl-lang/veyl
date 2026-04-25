@@ -1,0 +1,5 @@
+error: cannot assign to immutable binding
+  --> immutable_assignment.veyl:3:5
+   |
+  3 |     value = 2;
+   |     ^^^^^

@@ -170,7 +170,7 @@ pub const StructLiteralField = struct {
 
 pub const Pattern = union(enum) {
     wildcard: base.Span,
-    binding: struct { name: base.SymbolId, span: base.Span },
+    binding: struct { name: base.SymbolId, is_mut: bool, span: base.Span },
     int_literal: base.Span,
     float_literal: base.Span,
     string_literal: base.Span,
@@ -705,7 +705,7 @@ fn lowerPattern(hir: *Hir, ast: *const parser.Ast, pattern_id: parser.PatternId)
     const pattern = ast.patterns.items[pattern_id];
     const lowered: Pattern = switch (pattern) {
         .wildcard => |span| .{ .wildcard = span },
-        .binding => |binding| .{ .binding = .{ .name = binding.name, .span = binding.span } },
+        .binding => |binding| .{ .binding = .{ .name = binding.name, .is_mut = binding.is_mut, .span = binding.span } },
         .int_literal => |span| .{ .int_literal = span },
         .float_literal => |span| .{ .float_literal = span },
         .string_literal => |span| .{ .string_literal = span },

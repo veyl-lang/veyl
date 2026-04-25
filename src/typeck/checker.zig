@@ -4,8 +4,13 @@ const hir = @import("../hir.zig");
 const diag = @import("../diag.zig");
 
 const CheckError = std.mem.Allocator.Error;
-const TypeEnv = std.AutoHashMapUnmanaged(base.SymbolId, Type);
+const TypeEnv = std.AutoHashMapUnmanaged(base.SymbolId, LocalInfo);
 const FunctionEnv = std.AutoHashMapUnmanaged(base.SymbolId, hir.ir.FunctionDecl);
+
+const LocalInfo = struct {
+    type: Type,
+    is_mut: bool,
+};
 
 pub const Type = enum {
     unknown,
@@ -63,7 +68,7 @@ fn checkFunction(allocator: std.mem.Allocator, module: *const hir.Hir, interner:
     const start: usize = @intCast(function.params.start);
     const end: usize = @intCast(function.params.end());
     for (module.fn_params.items[start..end]) |param| {
-        try env.put(allocator, param.name, typeFromAnnotation(module, interner, param.type_expr));
+        try env.put(allocator, param.name, .{ .type = typeFromAnnotation(module, interner, param.type_expr), .is_mut = param.is_mut });
     }
 
     const expected = if (function.return_type) |return_type| typeFromAnnotation(module, interner, return_type) else Type.unit;
@@ -97,7 +102,7 @@ fn checkStmt(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *co
         .let_stmt => |let_stmt| {
             const value_type = try inferExpr(allocator, module, interner, functions, env, let_stmt.value, expected_return, diagnostics);
             if (let_stmt.else_block) |else_block| _ = try checkBlock(allocator, module, interner, functions, env, else_block, expected_return, diagnostics);
-            if (let_stmt.name) |name| try env.put(allocator, name, value_type);
+            if (let_stmt.name) |name| try env.put(allocator, name, .{ .type = value_type, .is_mut = bindingIsMut(module, let_stmt.pattern) });
         },
         .return_stmt => |return_stmt| {
             const actual = if (return_stmt.value) |value| try inferExpr(allocator, module, interner, functions, env, value, expected_return, diagnostics) else Type.unit;
@@ -115,7 +120,7 @@ fn checkStmt(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *co
         },
         .for_stmt => |for_stmt| {
             _ = try inferExpr(allocator, module, interner, functions, env, for_stmt.iterable, expected_return, diagnostics);
-            if (for_stmt.name) |name| try env.put(allocator, name, .unknown);
+            if (for_stmt.name) |name| try env.put(allocator, name, .{ .type = .unknown, .is_mut = bindingIsMut(module, for_stmt.pattern) });
             _ = try checkBlock(allocator, module, interner, functions, env, for_stmt.body, expected_return, diagnostics);
         },
         .defer_stmt => |defer_stmt| _ = try checkBlock(allocator, module, interner, functions, env, defer_stmt.body, expected_return, diagnostics),
@@ -146,7 +151,7 @@ fn checkCondition(allocator: std.mem.Allocator, module: *const hir.Hir, interner
 
 fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, expr_id: hir.ir.ExprId, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!Type {
     return switch (module.exprs.items[expr_id]) {
-        .name => |name| env.get(name.symbol) orelse .unknown,
+        .name => |name| if (env.get(name.symbol)) |local| local.type else .unknown,
         .int_literal => .int,
         .float_literal => .float,
         .string_literal => .string,
@@ -317,6 +322,20 @@ fn inferBinaryExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interne
             return .bool;
         },
         .assign => {
+            switch (module.exprs.items[binary.left]) {
+                .name => |name| {
+                    if (env.get(name.symbol)) |local| {
+                        if (!local.is_mut) {
+                            try diagnostics.add(.{
+                                .severity = .err,
+                                .span = exprSpan(module, binary.left),
+                                .message = "cannot assign to immutable binding",
+                            });
+                        }
+                    }
+                },
+                else => {},
+            }
             if (left_type != .unknown and right_type != .unknown and left_type != right_type) {
                 try diagnostics.add(.{
                     .severity = .err,
@@ -371,6 +390,13 @@ fn inferCallExpr(
         },
         else => return .unknown,
     }
+}
+
+fn bindingIsMut(module: *const hir.Hir, pattern_id: hir.ir.PatternId) bool {
+    return switch (module.patterns.items[pattern_id]) {
+        .binding => |binding| binding.is_mut,
+        else => false,
+    };
 }
 
 fn isNumeric(value_type: Type) bool {
