@@ -1,0 +1,7 @@
+fn main() -> Int {
+    add_one(41)
+}
+
+fn add_one(value: Int) -> Int {
+    value + 1
+}

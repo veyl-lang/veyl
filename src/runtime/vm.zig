@@ -12,6 +12,7 @@ pub const Value = union(enum) {
 pub const VmError = error{
     EmptyModule,
     StackUnderflow,
+    InvalidFunctionIndex,
     TypeMismatch,
     IntegerDivideByZero,
     UnsupportedInstruction,
@@ -32,13 +33,14 @@ pub const Vm = struct {
 
     pub fn runFirst(self: *Vm, module: *const bytecode.BytecodeModule) VmError!Value {
         if (module.functions.items.len == 0) return error.EmptyModule;
-        return self.runFunction(module, module.functions.items[0]);
+        return self.runFunction(module, module.functions.items[0], &.{});
     }
 
-    fn runFunction(self: *Vm, module: *const bytecode.BytecodeModule, function: bytecode.Function) VmError!Value {
+    fn runFunction(self: *Vm, module: *const bytecode.BytecodeModule, function: bytecode.Function, args: []const Value) VmError!Value {
         const locals = try self.allocator.alloc(Value, function.local_count);
         defer self.allocator.free(locals);
         for (locals) |*local| local.* = .unit;
+        for (args, 0..) |arg, index| locals[index] = arg;
 
         const start: usize = @intCast(function.code.start);
         const end: usize = @intCast(function.code.end());
@@ -51,6 +53,7 @@ pub const Vm = struct {
                 .constant_bool => try self.stack.append(self.allocator, .{ .bool = instruction.operand != 0 }),
                 .load_local => try self.stack.append(self.allocator, locals[instruction.operand]),
                 .store_local => locals[instruction.operand] = try self.pop(),
+                .call_function => try self.callFunction(module, instruction.operand),
                 .add => try self.binaryInt(.add),
                 .sub => try self.binaryInt(.sub),
                 .mul => try self.binaryInt(.mul),
@@ -72,6 +75,21 @@ pub const Vm = struct {
 
     fn pop(self: *Vm) VmError!Value {
         return self.stack.pop() orelse error.StackUnderflow;
+    }
+
+    fn callFunction(self: *Vm, module: *const bytecode.BytecodeModule, function_index: u32) VmError!void {
+        const index: usize = @intCast(function_index);
+        if (index >= module.functions.items.len) return error.InvalidFunctionIndex;
+        const function = module.functions.items[index];
+        const arg_count: usize = @intCast(function.params.len);
+        const args = try self.allocator.alloc(Value, arg_count);
+        defer self.allocator.free(args);
+        var remaining = arg_count;
+        while (remaining != 0) {
+            remaining -= 1;
+            args[remaining] = try self.pop();
+        }
+        try self.stack.append(self.allocator, try self.runFunction(module, function, args));
     }
 
     fn binaryInt(self: *Vm, op: bytecode.Op) VmError!void {

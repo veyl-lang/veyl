@@ -17,6 +17,7 @@ pub const Op = enum {
     get_name,
     get_field,
     call,
+    call_function,
     add,
     sub,
     mul,
@@ -71,6 +72,7 @@ const CompileContext = struct {
 pub const BytecodeModule = struct {
     allocator: Allocator,
     functions: std.ArrayListUnmanaged(Function) = .empty,
+    function_names: std.AutoHashMapUnmanaged(base.SymbolId, u32) = .empty,
     instructions: std.ArrayListUnmanaged(Instruction) = .empty,
     int_constants: std.ArrayListUnmanaged(i64) = .empty,
 
@@ -80,6 +82,7 @@ pub const BytecodeModule = struct {
 
     pub fn deinit(self: *BytecodeModule) void {
         self.functions.deinit(self.allocator);
+        self.function_names.deinit(self.allocator);
         self.instructions.deinit(self.allocator);
         self.int_constants.deinit(self.allocator);
         self.* = undefined;
@@ -91,6 +94,8 @@ pub const CompileError = Allocator.Error || error{InvalidIntegerLiteral};
 pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const u8) CompileError!BytecodeModule {
     var bytecode = BytecodeModule.init(allocator);
     errdefer bytecode.deinit();
+
+    try predeclareFunctions(&bytecode, module);
 
     for (module.decls.items) |decl| {
         switch (decl) {
@@ -109,9 +114,31 @@ pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const 
     return bytecode;
 }
 
+fn predeclareFunctions(bytecode: *BytecodeModule, module: *const hir.Hir) Allocator.Error!void {
+    for (module.decls.items) |decl| {
+        switch (decl) {
+            .function => |function| try bytecode.function_names.put(bytecode.allocator, function.name, @intCast(bytecode.function_names.count())),
+            .impl_decl => |impl_decl| {
+                const start: usize = @intCast(impl_decl.methods.start);
+                const end: usize = @intCast(impl_decl.methods.end());
+                for (module.impl_methods.items[start..end]) |method| {
+                    try bytecode.function_names.put(bytecode.allocator, method.name, @intCast(bytecode.function_names.count()));
+                }
+            },
+            else => {},
+        }
+    }
+}
+
 fn compileFunction(bytecode: *BytecodeModule, module: *const hir.Hir, source: []const u8, function: hir.ir.FunctionDecl) CompileError!void {
     var context = CompileContext{ .bytecode = bytecode, .module = module, .source = source };
     defer context.deinit();
+
+    const params_start: usize = @intCast(function.params.start);
+    const params_end: usize = @intCast(function.params.end());
+    for (module.fn_params.items[params_start..params_end]) |param| {
+        _ = try context.localSlot(param.name);
+    }
 
     const code_start: u32 = @intCast(bytecode.instructions.items.len);
     try compileBlock(&context, function.body, true);
@@ -202,6 +229,20 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
             try emit(bytecode, binaryOp(binary.op), 0);
         },
         .call => |call| {
+            switch (module.exprs.items[call.callee]) {
+                .name => |callee| {
+                    if (bytecode.function_names.get(callee.symbol)) |function_index| {
+                        const start: usize = @intCast(call.args.start);
+                        const end: usize = @intCast(call.args.end());
+                        for (module.expr_args.items[start..end]) |arg| {
+                            try compileExpr(context, arg);
+                        }
+                        try emit(bytecode, .call_function, function_index);
+                        return;
+                    }
+                },
+                else => {},
+            }
             try compileExpr(context, call.callee);
             const start: usize = @intCast(call.args.start);
             const end: usize = @intCast(call.args.end());
@@ -260,7 +301,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
             switch (instruction.op) {
                 .get_name, .get_field => try output.writer.print(" {s}", .{interner.get(instruction.operand) orelse "<missing>"}),
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
-                .call => try output.writer.print(" {d}", .{instruction.operand}),
+                .call, .call_function => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_bool => try output.writer.print(" {}", .{instruction.operand != 0}),
                 else => {},
