@@ -65,7 +65,7 @@ pub const Expr = union(enum) {
     array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
     block_expr: struct { block: BlockId, span: base.Span },
-    if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId, span: base.Span },
+    if_expr: struct { condition: ControlCondition, then_block: BlockId, else_block: ?BlockId, span: base.Span },
     match_expr: struct { value: ExprId, arms: base.Range, span: base.Span },
     try_expr: struct { value: ExprId, span: base.Span },
     catch_expr: struct { value: ExprId, binding: ?base.SymbolId, handler: CatchHandler, span: base.Span },
@@ -75,6 +75,11 @@ pub const Expr = union(enum) {
 pub const CatchHandler = union(enum) {
     expr: ExprId,
     block: BlockId,
+};
+
+pub const ControlCondition = union(enum) {
+    expr: ExprId,
+    let_pattern: struct { pattern: PatternId, value: ExprId, span: base.Span },
 };
 
 pub const StructLiteralField = struct {
@@ -110,7 +115,7 @@ pub const MatchArm = struct {
 pub const Stmt = union(enum) {
     let_stmt: struct { name: ?base.SymbolId, value: ExprId, else_block: ?BlockId, span: base.Span },
     return_stmt: struct { value: ?ExprId, span: base.Span },
-    while_stmt: struct { condition: ExprId, body: BlockId, span: base.Span },
+    while_stmt: struct { condition: ControlCondition, body: BlockId, span: base.Span },
     for_stmt: struct { name: ?base.SymbolId, iterable: ExprId, body: BlockId, span: base.Span },
     defer_stmt: struct { kind: parser.ast.DeferKind, body: BlockId, span: base.Span },
     break_stmt: base.Span,
@@ -420,10 +425,14 @@ fn lowerStructLiteralFields(hir: *Hir, ast: *const parser.Ast, fields: base.Rang
     return .{ .start = fields_start, .len = @intCast(hir.struct_literal_fields.items.len - fields_start) };
 }
 
-fn lowerControlCondition(hir: *Hir, ast: *const parser.Ast, condition: parser.ast.ControlCondition) Allocator.Error!ExprId {
+fn lowerControlCondition(hir: *Hir, ast: *const parser.Ast, condition: parser.ast.ControlCondition) Allocator.Error!ControlCondition {
     return switch (condition) {
-        .expr => |expr| try lowerExpr(hir, ast, expr),
-        .let_pattern => |let_pattern| try lowerUnsupportedExpr(hir, let_pattern.span),
+        .expr => |expr| .{ .expr = try lowerExpr(hir, ast, expr) },
+        .let_pattern => |let_pattern| .{ .let_pattern = .{
+            .pattern = try lowerPattern(hir, ast, let_pattern.pattern),
+            .value = try lowerExpr(hir, ast, let_pattern.value),
+            .span = let_pattern.span,
+        } },
     };
 }
 
@@ -607,7 +616,7 @@ fn dumpStmt(
             try writer.writeAll("While\n");
             try writeIndent(writer, indent + 1);
             try writer.writeAll("Condition\n");
-            try dumpExpr(writer, hir, interner, while_stmt.condition, indent + 2);
+            try dumpControlCondition(writer, hir, interner, while_stmt.condition, indent + 2);
             try dumpBlock(writer, hir, interner, while_stmt.body, indent + 1);
         },
         .for_stmt => |for_stmt| {
@@ -713,7 +722,7 @@ fn dumpExpr(
             try writer.writeAll("IfExpr\n");
             try writeIndent(writer, indent + 1);
             try writer.writeAll("Condition\n");
-            try dumpExpr(writer, hir, interner, if_expr.condition, indent + 2);
+            try dumpControlCondition(writer, hir, interner, if_expr.condition, indent + 2);
             try writeIndent(writer, indent + 1);
             try writer.writeAll("Then\n");
             try dumpBlock(writer, hir, interner, if_expr.then_block, indent + 2);
@@ -768,6 +777,26 @@ fn dumpExpr(
             }
         },
         .unsupported => try writer.writeAll("UnsupportedExpr\n"),
+    }
+}
+
+fn dumpControlCondition(
+    writer: *std.Io.Writer,
+    hir: *const Hir,
+    interner: *const base.Interner,
+    condition: ControlCondition,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    switch (condition) {
+        .expr => |expr| try dumpExpr(writer, hir, interner, expr, indent),
+        .let_pattern => |let_pattern| {
+            try writeIndent(writer, indent);
+            try writer.writeAll("LetCondition\n");
+            try dumpPattern(writer, hir, interner, let_pattern.pattern, indent + 1);
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Value\n");
+            try dumpExpr(writer, hir, interner, let_pattern.value, indent + 2);
+        },
     }
 }
 

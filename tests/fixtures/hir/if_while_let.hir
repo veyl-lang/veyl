@@ -1,0 +1,36 @@
+HirRoot
+  Function package consume params=1
+    Block
+      ExprStmt
+        IfExpr
+          Condition
+            LetCondition
+              Pattern Tuple Some
+                Pattern Binding token
+              Value
+                Name maybe
+          Then
+            Block
+              ExprStmt
+                Call
+                  Name print
+                  Name token
+          Else
+            Block
+              ExprStmt
+                Call
+                  Name print
+                  StringLiteral
+      While
+        Condition
+          LetCondition
+            Pattern Tuple Some
+              Pattern Binding item
+            Value
+              Call
+                Name next
+        Block
+          ExprStmt
+            Call
+              Name print
+              Name item

@@ -1,0 +1,10 @@
+fn consume(maybe: Option<Token>) {
+    if let Some(token) = maybe {
+        print(token);
+    } else {
+        print("missing");
+    }
+    while let Some(item) = next() {
+        print(item);
+    }
+}
