@@ -1,0 +1,13 @@
+//! User module docs.
+import std.fs
+import config.Config as AppConfig
+
+pub struct User {
+    name: Str,
+    age: Int,
+}
+
+fn birthday(mut user: User) -> User {
+    user.age += 1;
+    user
+}
