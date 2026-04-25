@@ -20,6 +20,9 @@ pub fn main(init: std.process.Init) !void {
     } else if (std.mem.eql(u8, command, "run")) {
         const path = args.next() orelse return usage(io);
         try runFile(io, allocator, path);
+    } else if (std.mem.eql(u8, command, "test")) {
+        const path = args.next() orelse return usage(io);
+        try testFile(io, allocator, path);
     } else if (std.mem.eql(u8, command, "fmt")) {
         const path = args.next() orelse return usage(io);
         try fmtFile(io, allocator, path);
@@ -121,6 +124,47 @@ fn runFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
         std.debug.print("runtime error: {s}\n", .{@errorName(err)});
         std.process.exit(1);
     };
+}
+
+fn testFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
+    var compilation = try parseFile(io, allocator, path);
+    defer compilation.deinit();
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    var hir = try veyl.hir.lowerAst(allocator, &compilation.tree.?);
+    defer hir.deinit();
+
+    var resolved = try veyl.resolve.resolveModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
+    defer resolved.deinit();
+
+    if (!compilation.diagnostics.hasErrors()) {
+        try veyl.typeck.checkModule(allocator, &hir, &compilation.interner, &compilation.diagnostics);
+    }
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    const source = compilation.sources.file(compilation.source_id).?.text;
+    var bytecode = try veyl.bytecode.compileHir(allocator, &hir, source, &compilation.interner);
+    defer bytecode.deinit();
+
+    var vm = veyl.runtime.Vm.init(allocator);
+    defer vm.deinit();
+
+    const passed = vm.runTests(&bytecode) catch |err| {
+        std.debug.print("test failure: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
+    };
+
+    const message = try std.fmt.allocPrint(allocator, "{d} tests passed\n", .{passed});
+    defer allocator.free(message);
+    try writeStdout(io, message);
 }
 
 fn dumpTokens(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
@@ -296,6 +340,7 @@ fn usage(io: std.Io) !void {
         \\Veyl commands:
         \\  veyl check <file>
         \\  veyl run <file>
+        \\  veyl test <file>
         \\  veyl fmt <file>
         \\  veyl dump tokens <file>
         \\  veyl dump ast <file>
