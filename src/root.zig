@@ -1,4 +1,5 @@
 pub const base = @import("base.zig");
+pub const bytecode = @import("bytecode.zig");
 pub const diag = @import("diag.zig");
 pub const fmt = @import("fmt.zig");
 pub const hir = @import("hir.zig");
@@ -12,6 +13,7 @@ pub const version = "0.0.1";
 
 test {
     _ = base;
+    _ = bytecode;
     _ = diag;
     _ = fmt;
     _ = hir;

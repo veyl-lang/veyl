@@ -31,6 +31,8 @@ pub fn main(init: std.process.Init) !void {
             try dumpHir(io, allocator, path);
         } else if (std.mem.eql(u8, kind, "resolve")) {
             try dumpResolve(io, allocator, path);
+        } else if (std.mem.eql(u8, kind, "bytecode")) {
+            try dumpBytecode(io, allocator, path);
         } else {
             try usage(io);
         }
@@ -152,6 +154,26 @@ fn dumpResolve(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void
     try writeStdout(io, dumped);
 }
 
+fn dumpBytecode(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
+    var compilation = try parseFile(io, allocator, path);
+    defer compilation.deinit();
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    var hir = try veyl.hir.lowerAst(allocator, &compilation.tree.?);
+    defer hir.deinit();
+
+    var bytecode = try veyl.bytecode.compileHir(allocator, &hir);
+    defer bytecode.deinit();
+
+    const dumped = try veyl.bytecode.dumpBytecode(allocator, &bytecode, &compilation.interner);
+    defer allocator.free(dumped);
+    try writeStdout(io, dumped);
+}
+
 const Compilation = struct {
     allocator: std.mem.Allocator,
     sources: veyl.base.SourceMap,
@@ -237,6 +259,7 @@ fn usage(io: std.Io) !void {
         \\  veyl dump ast <file>
         \\  veyl dump hir <file>
         \\  veyl dump resolve <file>
+        \\  veyl dump bytecode <file>
         \\  veyl version
         \\
     );
