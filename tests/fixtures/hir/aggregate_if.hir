@@ -1,0 +1,39 @@
+HirRoot
+  Struct package User
+  Function package example params=0
+    Block
+      Let values
+        ArrayLiteral
+          IntLiteral
+          IntLiteral
+      Let first
+        Index
+          Name values
+          IntLiteral
+      Let user
+        StructLiteral
+          Name User
+          Field name
+            StringLiteral
+      Let nested
+        BlockExpr
+          Block
+            Let local
+              Name first
+            FinalExpr
+              Name local
+      FinalExpr
+        IfExpr
+          Condition
+            Binary equal
+              Name nested
+              IntLiteral
+          Then
+            Block
+              FinalExpr
+                Field name
+                  Name user
+          Else
+            Block
+              FinalExpr
+                StringLiteral

@@ -60,7 +60,18 @@ pub const Expr = union(enum) {
     binary: struct { op: BinaryOp, left: ExprId, right: ExprId, span: base.Span },
     field: struct { base: ExprId, name: base.SymbolId, span: base.Span },
     call: struct { callee: ExprId, args: base.Range, span: base.Span },
+    index: struct { base: ExprId, index: ExprId, span: base.Span },
+    array_literal: struct { items: base.Range, span: base.Span },
+    struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
+    block_expr: struct { block: BlockId, span: base.Span },
+    if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId, span: base.Span },
     unsupported: base.Span,
+};
+
+pub const StructLiteralField = struct {
+    name: base.SymbolId,
+    value: ?ExprId,
+    span: base.Span,
 };
 
 pub const Stmt = union(enum) {
@@ -98,6 +109,7 @@ pub const Hir = struct {
     block_stmt_ids: std.ArrayListUnmanaged(StmtId) = .empty,
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
+    struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
 
     pub fn init(allocator: Allocator, source: base.SourceId) Hir {
         return .{ .allocator = allocator, .source = source };
@@ -112,6 +124,7 @@ pub const Hir = struct {
         self.block_stmt_ids.deinit(self.allocator);
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
+        self.struct_literal_fields.deinit(self.allocator);
         self.* = undefined;
     }
 };
@@ -192,19 +205,24 @@ fn lowerImplMethods(hir: *Hir, ast: *const parser.Ast, methods: base.Range) Allo
 
 fn lowerBlock(hir: *Hir, ast: *const parser.Ast, block_id: parser.ast.BlockId) Allocator.Error!BlockId {
     const ast_block = ast.blocks.items[block_id];
-    const stmts_start: u32 = @intCast(hir.block_stmt_ids.items.len);
+    var local_stmt_ids: std.ArrayListUnmanaged(StmtId) = .empty;
+    defer local_stmt_ids.deinit(hir.allocator);
+
     const start: usize = @intCast(ast_block.stmts.start);
     const end: usize = @intCast(ast_block.stmts.end());
     for (ast.block_stmt_ids.items[start..end]) |ast_stmt_id| {
+        const stmt = try lowerStmt(hir, ast, ast.stmts.items[ast_stmt_id]);
         const stmt_id: StmtId = @intCast(hir.stmts.items.len);
-        try hir.stmts.append(hir.allocator, try lowerStmt(hir, ast, ast.stmts.items[ast_stmt_id]));
-        try hir.block_stmt_ids.append(hir.allocator, stmt_id);
+        try hir.stmts.append(hir.allocator, stmt);
+        try local_stmt_ids.append(hir.allocator, stmt_id);
     }
 
     const final_expr = if (ast_block.final_expr) |expr| try lowerExpr(hir, ast, expr) else null;
+    const stmts_start: u32 = @intCast(hir.block_stmt_ids.items.len);
+    try hir.block_stmt_ids.appendSlice(hir.allocator, local_stmt_ids.items);
     const hir_block: BlockId = @intCast(hir.blocks.items.len);
     try hir.blocks.append(hir.allocator, .{
-        .stmts = .{ .start = stmts_start, .len = @intCast(hir.block_stmt_ids.items.len - stmts_start) },
+        .stmts = .{ .start = stmts_start, .len = @intCast(local_stmt_ids.items.len) },
         .final_expr = final_expr,
         .span = ast_block.span,
     });
@@ -264,6 +282,30 @@ fn lowerExpr(hir: *Hir, ast: *const parser.Ast, expr_id: parser.ExprId) Allocato
             .args = try lowerCallArgs(hir, ast, call.args),
             .span = call.span,
         } },
+        .index => |index| .{ .index = .{
+            .base = try lowerExpr(hir, ast, index.base),
+            .index = try lowerExpr(hir, ast, index.index),
+            .span = index.span,
+        } },
+        .array_literal => |array_literal| .{ .array_literal = .{
+            .items = try lowerExprRange(hir, ast, array_literal.items),
+            .span = array_literal.span,
+        } },
+        .struct_literal => |literal| .{ .struct_literal = .{
+            .type_expr = try lowerExpr(hir, ast, literal.type_expr),
+            .fields = try lowerStructLiteralFields(hir, ast, literal.fields),
+            .span = literal.span,
+        } },
+        .block_expr => |block_expr| .{ .block_expr = .{
+            .block = try lowerBlock(hir, ast, block_expr.block),
+            .span = block_expr.span,
+        } },
+        .if_expr => |if_expr| .{ .if_expr = .{
+            .condition = try lowerControlCondition(hir, ast, if_expr.condition),
+            .then_block = try lowerBlock(hir, ast, if_expr.then_block),
+            .else_block = if (if_expr.else_block) |else_block| try lowerBlock(hir, ast, else_block) else null,
+            .span = if_expr.span,
+        } },
         else => .{ .unsupported = expr.span() },
     };
 
@@ -280,6 +322,43 @@ fn lowerCallArgs(hir: *Hir, ast: *const parser.Ast, args: base.Range) Allocator.
         try hir.expr_args.append(hir.allocator, try lowerExpr(hir, ast, arg.value));
     }
     return .{ .start = args_start, .len = @intCast(hir.expr_args.items.len - args_start) };
+}
+
+fn lowerExprRange(hir: *Hir, ast: *const parser.Ast, exprs: base.Range) Allocator.Error!base.Range {
+    const exprs_start: u32 = @intCast(hir.expr_args.items.len);
+    const start: usize = @intCast(exprs.start);
+    const end: usize = @intCast(exprs.end());
+    for (ast.expr_args.items[start..end]) |expr| {
+        try hir.expr_args.append(hir.allocator, try lowerExpr(hir, ast, expr));
+    }
+    return .{ .start = exprs_start, .len = @intCast(hir.expr_args.items.len - exprs_start) };
+}
+
+fn lowerStructLiteralFields(hir: *Hir, ast: *const parser.Ast, fields: base.Range) Allocator.Error!base.Range {
+    const fields_start: u32 = @intCast(hir.struct_literal_fields.items.len);
+    const start: usize = @intCast(fields.start);
+    const end: usize = @intCast(fields.end());
+    for (ast.struct_literal_fields.items[start..end]) |field| {
+        try hir.struct_literal_fields.append(hir.allocator, .{
+            .name = field.name,
+            .value = if (field.value) |value| try lowerExpr(hir, ast, value) else null,
+            .span = field.span,
+        });
+    }
+    return .{ .start = fields_start, .len = @intCast(hir.struct_literal_fields.items.len - fields_start) };
+}
+
+fn lowerControlCondition(hir: *Hir, ast: *const parser.Ast, condition: parser.ast.ControlCondition) Allocator.Error!ExprId {
+    return switch (condition) {
+        .expr => |expr| try lowerExpr(hir, ast, expr),
+        .let_pattern => |let_pattern| try lowerUnsupportedExpr(hir, let_pattern.span),
+    };
+}
+
+fn lowerUnsupportedExpr(hir: *Hir, span: base.Span) Allocator.Error!ExprId {
+    const expr_id: ExprId = @intCast(hir.exprs.items.len);
+    try hir.exprs.append(hir.allocator, .{ .unsupported = span });
+    return expr_id;
 }
 
 pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Interner) DumpError![]u8 {
@@ -420,6 +499,48 @@ fn dumpExpr(
             const end: usize = @intCast(call.args.end());
             for (hir.expr_args.items[start..end]) |arg| {
                 try dumpExpr(writer, hir, interner, arg, indent + 1);
+            }
+        },
+        .index => |index| {
+            try writer.writeAll("Index\n");
+            try dumpExpr(writer, hir, interner, index.base, indent + 1);
+            try dumpExpr(writer, hir, interner, index.index, indent + 1);
+        },
+        .array_literal => |array_literal| {
+            try writer.writeAll("ArrayLiteral\n");
+            const start: usize = @intCast(array_literal.items.start);
+            const end: usize = @intCast(array_literal.items.end());
+            for (hir.expr_args.items[start..end]) |item| {
+                try dumpExpr(writer, hir, interner, item, indent + 1);
+            }
+        },
+        .struct_literal => |literal| {
+            try writer.writeAll("StructLiteral\n");
+            try dumpExpr(writer, hir, interner, literal.type_expr, indent + 1);
+            const start: usize = @intCast(literal.fields.start);
+            const end: usize = @intCast(literal.fields.end());
+            for (hir.struct_literal_fields.items[start..end]) |field| {
+                try writeIndent(writer, indent + 1);
+                try writer.print("Field {s}\n", .{interner.get(field.name) orelse "<missing>"});
+                if (field.value) |value| try dumpExpr(writer, hir, interner, value, indent + 2);
+            }
+        },
+        .block_expr => |block_expr| {
+            try writer.writeAll("BlockExpr\n");
+            try dumpBlock(writer, hir, interner, block_expr.block, indent + 1);
+        },
+        .if_expr => |if_expr| {
+            try writer.writeAll("IfExpr\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Condition\n");
+            try dumpExpr(writer, hir, interner, if_expr.condition, indent + 2);
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Then\n");
+            try dumpBlock(writer, hir, interner, if_expr.then_block, indent + 2);
+            if (if_expr.else_block) |else_block| {
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("Else\n");
+                try dumpBlock(writer, hir, interner, else_block, indent + 2);
             }
         },
         .unsupported => try writer.writeAll("UnsupportedExpr\n"),
