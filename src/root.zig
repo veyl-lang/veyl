@@ -6,6 +6,7 @@ pub const host = @import("host.zig");
 pub const lexer = @import("lexer.zig");
 pub const parser = @import("parser.zig");
 pub const resolve = @import("resolve.zig");
+pub const typeck = @import("typeck.zig");
 
 pub const version = "0.0.1";
 
@@ -18,6 +19,7 @@ test {
     _ = lexer;
     _ = parser;
     _ = resolve;
+    _ = typeck;
 }
 
 test "version is available" {
