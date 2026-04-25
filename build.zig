@@ -35,19 +35,30 @@ pub fn build(b: *std.Build) void {
     });
     const run_tests = b.addRunArtifact(tests);
 
-    const fixture_tests = b.addTest(.{
+    const lexer_fixture_tests = b.addTest(.{
         .root_module = b.createModule(.{
             .root_source_file = b.path("tests/lexer_fixtures.zig"),
             .target = target,
             .optimize = optimize,
         }),
     });
-    fixture_tests.root_module.addImport("veyl", veyl_mod);
-    const run_fixture_tests = b.addRunArtifact(fixture_tests);
+    lexer_fixture_tests.root_module.addImport("veyl", veyl_mod);
+    const run_lexer_fixture_tests = b.addRunArtifact(lexer_fixture_tests);
+
+    const parser_fixture_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/parser_fixtures.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    parser_fixture_tests.root_module.addImport("veyl", veyl_mod);
+    const run_parser_fixture_tests = b.addRunArtifact(parser_fixture_tests);
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
-    test_step.dependOn(&run_fixture_tests.step);
+    test_step.dependOn(&run_lexer_fixture_tests.step);
+    test_step.dependOn(&run_parser_fixture_tests.step);
 
     const fmt_step = b.step("fmt", "Format Zig source");
     fmt_step.dependOn(&b.addFmt(.{
@@ -71,6 +82,7 @@ pub fn build(b: *std.Build) void {
     const check_step = b.step("check", "Build all artifacts without running tests");
     check_step.dependOn(&exe.step);
     check_step.dependOn(&tests.step);
-    check_step.dependOn(&fixture_tests.step);
+    check_step.dependOn(&lexer_fixture_tests.step);
+    check_step.dependOn(&parser_fixture_tests.step);
     check_step.dependOn(fmt_check_step);
 }
