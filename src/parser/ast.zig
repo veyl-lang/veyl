@@ -153,13 +153,14 @@ pub const Expr = union(enum) {
     string_literal: base.Span,
     char_literal: base.Span,
     bool_literal: struct { value: bool, span: base.Span },
+    unit_literal: base.Span,
     binary: struct { op: BinaryOp, left: ExprId, right: ExprId, span: base.Span },
     field: struct { base: ExprId, name: base.SymbolId, name_span: base.Span, span: base.Span },
     call: struct { callee: ExprId, args: base.Range, span: base.Span },
     index: struct { base: ExprId, index: ExprId, span: base.Span },
     array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
-    if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
+    if_expr: struct { condition: ControlCondition, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
     match_expr: MatchExpr,
     try_expr: TryExpr,
     catch_expr: CatchExpr,
@@ -172,6 +173,7 @@ pub const Expr = union(enum) {
             .string_literal => |span_value| span_value,
             .char_literal => |span_value| span_value,
             .bool_literal => |expr| expr.span,
+            .unit_literal => |span_value| span_value,
             .binary => |expr| expr.span,
             .field => |expr| expr.span,
             .call => |expr| expr.span,
@@ -261,6 +263,18 @@ pub const StructLiteralField = struct {
     span: base.Span,
 };
 
+pub const ControlCondition = union(enum) {
+    expr: ExprId,
+    let_pattern: struct { pattern: PatternId, value: ExprId, span: base.Span },
+
+    pub fn span(self: ControlCondition, ast: *const Ast) base.Span {
+        return switch (self) {
+            .expr => |expr_id| ast.exprs.items[expr_id].span(),
+            .let_pattern => |condition| condition.span,
+        };
+    }
+};
+
 pub const TryExpr = struct {
     value: ExprId,
     span: base.Span,
@@ -303,7 +317,7 @@ pub const ReturnStmt = struct {
 };
 
 pub const WhileStmt = struct {
-    condition: ExprId,
+    condition: ControlCondition,
     body: BlockId,
     span: base.Span,
 };
@@ -781,7 +795,7 @@ fn dumpStmt(
             try writer.writeAll("WhileStmt\n");
             try writeIndent(writer, indent + 1);
             try writer.writeAll("Condition\n");
-            try dumpExpr(writer, ast, interner, while_stmt.condition, indent + 2);
+            try dumpControlCondition(writer, ast, interner, while_stmt.condition, indent + 2);
             try dumpBlock(writer, ast, interner, ast.blocks.items[while_stmt.body], indent + 1);
         },
         .defer_stmt => |defer_stmt| {
@@ -821,6 +835,7 @@ fn dumpExpr(
         .string_literal => try writer.writeAll("StringLiteral\n"),
         .char_literal => try writer.writeAll("CharLiteral\n"),
         .bool_literal => |bool_expr| try writer.print("BoolLiteral {}\n", .{bool_expr.value}),
+        .unit_literal => try writer.writeAll("UnitLiteral\n"),
         .binary => |binary| {
             try writer.print("Binary {s}\n", .{@tagName(binary.op)});
             try dumpExpr(writer, ast, interner, binary.left, indent + 1);
@@ -869,7 +884,7 @@ fn dumpExpr(
             try writer.writeAll("IfExpr\n");
             try writeIndent(writer, indent + 1);
             try writer.writeAll("Condition\n");
-            try dumpExpr(writer, ast, interner, if_expr.condition, indent + 2);
+            try dumpControlCondition(writer, ast, interner, if_expr.condition, indent + 2);
             try writeIndent(writer, indent + 1);
             try writer.writeAll("Then\n");
             try dumpBlock(writer, ast, interner, ast.blocks.items[if_expr.then_block], indent + 2);
@@ -922,6 +937,26 @@ fn dumpExpr(
                 .expr => |handler_expr| try dumpExpr(writer, ast, interner, handler_expr, indent + 2),
                 .block => |block_id| try dumpBlock(writer, ast, interner, ast.blocks.items[block_id], indent + 2),
             }
+        },
+    }
+}
+
+fn dumpControlCondition(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    condition: ControlCondition,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    switch (condition) {
+        .expr => |expr_id| try dumpExpr(writer, ast, interner, expr_id, indent),
+        .let_pattern => |let_condition| {
+            try writeIndent(writer, indent);
+            try writer.writeAll("LetCondition\n");
+            try dumpPattern(writer, ast, interner, let_condition.pattern, indent + 1);
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Value\n");
+            try dumpExpr(writer, ast, interner, let_condition.value, indent + 2);
         },
     }
 }

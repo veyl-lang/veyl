@@ -1,0 +1,13 @@
+fn drain(mut stream: Stream) -> Result<(), Error> {
+    if let Some(token) = stream.peek() {
+        use_token(token);
+    } else {
+        return Err(Error.Empty);
+    }
+
+    while let Some(item) = stream.next() {
+        handle(item);
+    }
+
+    Ok(())
+}

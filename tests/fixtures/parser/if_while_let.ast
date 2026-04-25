@@ -1,0 +1,46 @@
+Root
+  FnDecl package drain
+    Param mut stream: Stream
+    Return Result<(), Error>
+    Block
+      ExprStmt
+        IfExpr
+          Condition
+            LetCondition
+              Pattern Tuple Some
+                Pattern Binding token
+              Value
+                Call
+                  Field peek
+                    Name stream
+          Then
+            Block
+              ExprStmt
+                Call
+                  Name use_token
+                  Name token
+          Else
+            Block
+              ReturnStmt
+                Call
+                  Name Err
+                  Field Empty
+                    Name Error
+      WhileStmt
+        Condition
+          LetCondition
+            Pattern Tuple Some
+              Pattern Binding item
+            Value
+              Call
+                Field next
+                  Name stream
+        Block
+          ExprStmt
+            Call
+              Name handle
+              Name item
+      FinalExpr
+        Call
+          Name Ok
+          UnitLiteral

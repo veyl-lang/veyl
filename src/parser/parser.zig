@@ -519,6 +519,8 @@ const Parser = struct {
                 if (self.match(.semicolon)) |semicolon| {
                     try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .expr_stmt = expr }));
                     end_span = semicolon.span;
+                } else if (self.tree.exprs.items[expr] == .if_expr and self.peekKind() != .r_brace and self.peekKind() != .eof) {
+                    try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .expr_stmt = expr }));
                 } else {
                     final_expr = expr;
                     break;
@@ -595,7 +597,7 @@ const Parser = struct {
         const old_allow_struct_literal = self.allow_struct_literal;
         self.allow_struct_literal = false;
         defer self.allow_struct_literal = old_allow_struct_literal;
-        const condition = try self.parseExpression(@intFromEnum(Precedence.lowest));
+        const condition = try self.parseControlCondition();
 
         const body = try self.parseBlock();
         return .{
@@ -804,18 +806,25 @@ const Parser = struct {
             .keyword_try => return self.parseTryExpr(token.span),
             .l_bracket => return self.parseArrayLiteral(token.span),
             .l_paren => {
+                if (self.match(.r_paren)) |close| {
+                    return self.tree.addExpr(.{ .unit_literal = base.Span.join(token.span, close.span) });
+                }
                 const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
                 _ = try self.expect(.r_paren, "expected `)` after expression");
                 return expr;
             },
             else => {
                 try self.addError(token.span, "expected expression");
-                return self.tree.addExpr(.{ .name = .{
-                    .symbol = try self.interner.intern("<error>"),
-                    .span = token.span,
-                } });
+                return self.errorExpr(token.span);
             },
         }
+    }
+
+    fn errorExpr(self: *Parser, span: base.Span) Allocator.Error!ast_mod.ExprId {
+        return self.tree.addExpr(.{ .name = .{
+            .symbol = try self.interner.intern("<error>"),
+            .span = span,
+        } });
     }
 
     fn parseTryExpr(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {
@@ -855,7 +864,7 @@ const Parser = struct {
         const old_allow_struct_literal = self.allow_struct_literal;
         self.allow_struct_literal = false;
         defer self.allow_struct_literal = old_allow_struct_literal;
-        const condition = try self.parseExpression(@intFromEnum(Precedence.lowest));
+        const condition = try self.parseControlCondition();
 
         const then_block = try self.parseBlock();
         var else_block: ?ast_mod.BlockId = null;
@@ -872,6 +881,25 @@ const Parser = struct {
             .else_block = else_block,
             .span = base.Span.join(start_span, end_span),
         } });
+    }
+
+    fn parseControlCondition(self: *Parser) Allocator.Error!ast_mod.ControlCondition {
+        if (self.match(.keyword_let)) |let_token| {
+            const pattern = try self.parsePattern();
+            _ = (try self.expect(.equal, "expected `=` after condition pattern")) orelse return .{ .let_pattern = .{
+                .pattern = pattern,
+                .value = try self.errorExpr(let_token.span),
+                .span = base.Span.join(let_token.span, self.tree.patterns.items[pattern].span()),
+            } };
+            const value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+            return .{ .let_pattern = .{
+                .pattern = pattern,
+                .value = value,
+                .span = base.Span.join(let_token.span, self.tree.exprs.items[value].span()),
+            } };
+        }
+
+        return .{ .expr = try self.parseExpression(@intFromEnum(Precedence.lowest)) };
     }
 
     fn parseMatchExpr(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {
