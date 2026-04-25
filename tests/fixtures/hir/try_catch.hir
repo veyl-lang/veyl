@@ -1,0 +1,31 @@
+HirRoot
+  Function package load params=1
+    Block
+      Let text
+        Catch
+          Value
+            Call
+              Name read
+              Name path
+          Binding err
+          Handler
+            Block
+              Return
+                Call
+                  Name Err
+                  Name err
+      Let fallback
+        Catch
+          Value
+            Call
+              Name parse
+              StringLiteral
+          Handler
+            Call
+              Field default
+                Name Config
+      FinalExpr
+        Try
+          Call
+            Name parse
+            Name text

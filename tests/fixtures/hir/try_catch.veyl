@@ -1,0 +1,7 @@
+fn load(path: Path) -> Result<Config, Error> {
+    let text = read(path) catch |err| {
+        return Err(err);
+    };
+    let fallback = parse("default") catch Config.default();
+    try parse(text)
+}

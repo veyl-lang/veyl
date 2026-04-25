@@ -65,7 +65,14 @@ pub const Expr = union(enum) {
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
     block_expr: struct { block: BlockId, span: base.Span },
     if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId, span: base.Span },
+    try_expr: struct { value: ExprId, span: base.Span },
+    catch_expr: struct { value: ExprId, binding: ?base.SymbolId, handler: CatchHandler, span: base.Span },
     unsupported: base.Span,
+};
+
+pub const CatchHandler = union(enum) {
+    expr: ExprId,
+    block: BlockId,
 };
 
 pub const StructLiteralField = struct {
@@ -324,6 +331,16 @@ fn lowerExpr(hir: *Hir, ast: *const parser.Ast, expr_id: parser.ExprId) Allocato
             .else_block = if (if_expr.else_block) |else_block| try lowerBlock(hir, ast, else_block) else null,
             .span = if_expr.span,
         } },
+        .try_expr => |try_expr| .{ .try_expr = .{
+            .value = try lowerExpr(hir, ast, try_expr.value),
+            .span = try_expr.span,
+        } },
+        .catch_expr => |catch_expr| .{ .catch_expr = .{
+            .value = try lowerExpr(hir, ast, catch_expr.value),
+            .binding = if (catch_expr.binding) |binding| binding.name else null,
+            .handler = try lowerCatchHandler(hir, ast, catch_expr.handler),
+            .span = catch_expr.span,
+        } },
         else => .{ .unsupported = expr.span() },
     };
 
@@ -370,6 +387,13 @@ fn lowerControlCondition(hir: *Hir, ast: *const parser.Ast, condition: parser.as
     return switch (condition) {
         .expr => |expr| try lowerExpr(hir, ast, expr),
         .let_pattern => |let_pattern| try lowerUnsupportedExpr(hir, let_pattern.span),
+    };
+}
+
+fn lowerCatchHandler(hir: *Hir, ast: *const parser.Ast, handler: parser.ast.CatchHandler) Allocator.Error!CatchHandler {
+    return switch (handler) {
+        .expr => |expr| .{ .expr = try lowerExpr(hir, ast, expr) },
+        .block => |block| .{ .block = try lowerBlock(hir, ast, block) },
     };
 }
 
@@ -592,6 +616,26 @@ fn dumpExpr(
                 try writeIndent(writer, indent + 1);
                 try writer.writeAll("Else\n");
                 try dumpBlock(writer, hir, interner, else_block, indent + 2);
+            }
+        },
+        .try_expr => |try_expr| {
+            try writer.writeAll("Try\n");
+            try dumpExpr(writer, hir, interner, try_expr.value, indent + 1);
+        },
+        .catch_expr => |catch_expr| {
+            try writer.writeAll("Catch\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Value\n");
+            try dumpExpr(writer, hir, interner, catch_expr.value, indent + 2);
+            if (catch_expr.binding) |binding| {
+                try writeIndent(writer, indent + 1);
+                try writer.print("Binding {s}\n", .{interner.get(binding) orelse "<missing>"});
+            }
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Handler\n");
+            switch (catch_expr.handler) {
+                .expr => |expr| try dumpExpr(writer, hir, interner, expr, indent + 2),
+                .block => |block| try dumpBlock(writer, hir, interner, block, indent + 2),
             }
         },
         .unsupported => try writer.writeAll("UnsupportedExpr\n"),
