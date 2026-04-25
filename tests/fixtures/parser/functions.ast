@@ -1,0 +1,10 @@
+Root
+  FnDecl public birthday
+    Param mut user: User
+    Return User
+  FnDecl package log_user
+    Param user: User
+    Return ()
+  FnDecl private parse_line
+    Param line: Str
+    Return Pair

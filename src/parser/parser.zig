@@ -54,6 +54,8 @@ const Parser = struct {
                 try self.parseImport(visibility, start_span);
             } else if (self.peekKind() == .keyword_type) {
                 try self.parseTypeAlias(visibility, start_span);
+            } else if (self.peekKind() == .keyword_fn) {
+                try self.parseFn(visibility, start_span);
             } else if (self.peekKind() == .keyword_struct) {
                 try self.parseStruct(visibility, start_span);
             } else if (self.peekKind() == .keyword_enum) {
@@ -103,6 +105,94 @@ const Parser = struct {
             .alias_span = alias_span,
             .span = base.Span.join(start_span, end_span),
         } });
+    }
+
+    fn parseFn(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_fn, "expected function declaration")) orelse return;
+        const name_token = (try self.expectIdentifier("expected function name")) orelse return;
+        _ = (try self.expect(.l_paren, "expected `(` after function name")) orelse return;
+
+        const params_start = self.tree.reserveFnParams();
+        var params_len: u32 = 0;
+        while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
+            const param = try self.parseFnParam();
+            try self.tree.addFnParam(param);
+            params_len += 1;
+            if (self.match(.comma) == null) break;
+        }
+
+        _ = (try self.expect(.r_paren, "expected `)` after function parameters")) orelse return;
+
+        var return_type: ?base.Range = null;
+        if (self.match(.arrow) != null) {
+            return_type = try self.parsePath("expected function return type");
+        }
+
+        const body_span = try self.parseBodySpan();
+        _ = try self.tree.addDecl(.{ .fn_decl = .{
+            .visibility = visibility,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .params = .{ .start = params_start, .len = params_len },
+            .return_type = return_type,
+            .body_span = body_span,
+            .span = base.Span.join(start_span, body_span),
+        } });
+    }
+
+    fn parseFnParam(self: *Parser) Allocator.Error!ast_mod.FnParam {
+        var is_mut = false;
+        var start_span = self.peek().span;
+        if (self.match(.keyword_mut)) |mut_token| {
+            is_mut = true;
+            start_span = mut_token.span;
+        }
+
+        const name_token = (try self.expectIdentifier("expected function parameter name")) orelse return .{
+            .is_mut = is_mut,
+            .name = try self.interner.intern("<error>"),
+            .name_span = start_span,
+            .type_path = .{ .start = self.tree.reservePath(), .len = 0 },
+            .span = start_span,
+        };
+        _ = (try self.expect(.colon, "expected `:` after function parameter name")) orelse return .{
+            .is_mut = is_mut,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .type_path = .{ .start = self.tree.reservePath(), .len = 0 },
+            .span = name_token.span,
+        };
+
+        const type_path = try self.parsePath("expected function parameter type");
+        return .{
+            .is_mut = is_mut,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .type_path = type_path,
+            .span = base.Span.join(start_span, self.previous().span),
+        };
+    }
+
+    fn parseBodySpan(self: *Parser) Allocator.Error!base.Span {
+        const open = (try self.expect(.l_brace, "expected function body")) orelse return self.peek().span;
+        var depth: usize = 1;
+        var end_span = open.span;
+
+        while (depth > 0 and self.peekKind() != .eof) {
+            const token = self.advance();
+            end_span = token.span;
+            switch (token.kind) {
+                .l_brace => depth += 1,
+                .r_brace => depth -= 1,
+                else => {},
+            }
+        }
+
+        if (depth != 0) {
+            try self.addError(self.peek().span, "expected `}` after function body");
+        }
+
+        return base.Span.join(open.span, end_span);
     }
 
     fn parseTypeAlias(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
@@ -464,6 +554,45 @@ test "parser builds type alias AST" {
         "Root\n" ++
             "  TypeAliasDecl public UserId = Int\n" ++
             "  TypeAliasDecl package ConfigMap = Map\n",
+        dumped,
+    );
+}
+
+test "parser builds function declaration AST" {
+    const source =
+        \\pub fn birthday(mut user: User) -> User {
+        \\    user
+        \\}
+        \\fn log_user(user: User) {}
+        \\
+    ;
+
+    var diagnostics = diag.DiagnosticBag.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var tokens = try lexer.lex(std.testing.allocator, 0, source, &diagnostics);
+    defer tokens.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = try parse(std.testing.allocator, 0, source, tokens.tokens.items, &interner, &diagnostics);
+    defer tree.deinit();
+
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    const dumped = try ast_mod.dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  FnDecl public birthday\n" ++
+            "    Param mut user: User\n" ++
+            "    Return User\n" ++
+            "  FnDecl package log_user\n" ++
+            "    Param user: User\n" ++
+            "    Return ()\n",
         dumped,
     );
 }

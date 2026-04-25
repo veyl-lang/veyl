@@ -1,0 +1,12 @@
+pub fn birthday(mut user: User) -> User {
+    user.age += 1;
+    user
+}
+
+fn log_user(user: User) {
+    print(user.name);
+}
+
+private fn parse_line(line: Str) -> Pair {
+    Pair
+}

@@ -33,6 +33,24 @@ pub const TypeAliasDecl = struct {
     span: base.Span,
 };
 
+pub const FnParam = struct {
+    is_mut: bool,
+    name: base.SymbolId,
+    name_span: base.Span,
+    type_path: base.Range,
+    span: base.Span,
+};
+
+pub const FnDecl = struct {
+    visibility: Visibility,
+    name: base.SymbolId,
+    name_span: base.Span,
+    params: base.Range,
+    return_type: ?base.Range = null,
+    body_span: base.Span,
+    span: base.Span,
+};
+
 pub const StructField = struct {
     visibility: Visibility,
     name: base.SymbolId,
@@ -81,6 +99,7 @@ pub const EnumDecl = struct {
 pub const Decl = union(enum) {
     import: ImportDecl,
     type_alias: TypeAliasDecl,
+    fn_decl: FnDecl,
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
 
@@ -88,6 +107,7 @@ pub const Decl = union(enum) {
         return switch (self) {
             .import => |decl| decl.span,
             .type_alias => |decl| decl.span,
+            .fn_decl => |decl| decl.span,
             .struct_decl => |decl| decl.span,
             .enum_decl => |decl| decl.span,
         };
@@ -99,6 +119,7 @@ pub const Ast = struct {
     source: base.SourceId,
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
+    fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
     struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
     enum_variants: std.ArrayListUnmanaged(EnumVariant) = .empty,
     enum_fields: std.ArrayListUnmanaged(EnumField) = .empty,
@@ -113,6 +134,7 @@ pub const Ast = struct {
     pub fn deinit(self: *Ast) void {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
+        self.fn_params.deinit(self.allocator);
         self.struct_fields.deinit(self.allocator);
         self.enum_variants.deinit(self.allocator);
         self.enum_fields.deinit(self.allocator);
@@ -135,6 +157,14 @@ pub const Ast = struct {
 
     pub fn reserveStructFields(self: *const Ast) u32 {
         return @intCast(self.struct_fields.items.len);
+    }
+
+    pub fn reserveFnParams(self: *const Ast) u32 {
+        return @intCast(self.fn_params.items.len);
+    }
+
+    pub fn addFnParam(self: *Ast, param: FnParam) Allocator.Error!void {
+        try self.fn_params.append(self.allocator, param);
     }
 
     pub fn addStructField(self: *Ast, field: StructField) Allocator.Error!void {
@@ -167,12 +197,44 @@ pub fn dumpAst(allocator: Allocator, ast: *const Ast, interner: *const base.Inte
         switch (decl) {
             .import => |import_decl| try dumpImport(&output.writer, ast, interner, import_decl),
             .type_alias => |type_alias| try dumpTypeAlias(&output.writer, ast, interner, type_alias),
+            .fn_decl => |fn_decl| try dumpFn(&output.writer, ast, interner, fn_decl),
             .struct_decl => |struct_decl| try dumpStruct(&output.writer, ast, interner, struct_decl),
             .enum_decl => |enum_decl| try dumpEnum(&output.writer, ast, interner, enum_decl),
         }
     }
 
     return output.toOwnedSlice();
+}
+
+fn dumpFn(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    fn_decl: FnDecl,
+) std.Io.Writer.Error!void {
+    try writer.print("  FnDecl {s} {s}\n", .{
+        @tagName(fn_decl.visibility),
+        interner.get(fn_decl.name) orelse "<missing>",
+    });
+
+    const start: usize = @intCast(fn_decl.params.start);
+    const end: usize = @intCast(fn_decl.params.end());
+    for (ast.fn_params.items[start..end]) |param| {
+        try writer.print("    Param {s}{s}: ", .{
+            if (param.is_mut) "mut " else "",
+            interner.get(param.name) orelse "<missing>",
+        });
+        try dumpPath(writer, ast, interner, param.type_path);
+        try writer.writeByte('\n');
+    }
+
+    try writer.writeAll("    Return ");
+    if (fn_decl.return_type) |return_type| {
+        try dumpPath(writer, ast, interner, return_type);
+    } else {
+        try writer.writeAll("()");
+    }
+    try writer.writeByte('\n');
 }
 
 fn dumpTypeAlias(
@@ -325,6 +387,47 @@ test "AST dump renders type alias declarations" {
     try std.testing.expectEqualStrings(
         "Root\n" ++
             "  TypeAliasDecl package UserId = Int\n",
+        dumped,
+    );
+}
+
+test "AST dump renders function declarations" {
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = Ast.init(std.testing.allocator, 0);
+    defer tree.deinit();
+
+    const user_type_start = tree.reservePath();
+    try tree.addPathSegment(.{ .name = try interner.intern("User"), .span = .{ .source = 0, .start = 22, .len = 4 } });
+
+    const params_start = tree.reserveFnParams();
+    try tree.addFnParam(.{
+        .is_mut = true,
+        .name = try interner.intern("user"),
+        .name_span = .{ .source = 0, .start = 16, .len = 4 },
+        .type_path = .{ .start = user_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 12, .len = 14 },
+    });
+
+    _ = try tree.addDecl(.{ .fn_decl = .{
+        .visibility = .public,
+        .name = try interner.intern("birthday"),
+        .name_span = .{ .source = 0, .start = 7, .len = 8 },
+        .params = .{ .start = params_start, .len = 1 },
+        .return_type = .{ .start = user_type_start, .len = 1 },
+        .body_span = .{ .source = 0, .start = 35, .len = 2 },
+        .span = .{ .source = 0, .start = 0, .len = 37 },
+    } });
+
+    const dumped = try dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  FnDecl public birthday\n" ++
+            "    Param mut user: User\n" ++
+            "    Return User\n",
         dumped,
     );
 }
