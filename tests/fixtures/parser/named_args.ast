@@ -1,0 +1,13 @@
+Root
+  FnDecl package configure
+    Param path: Path
+    Return Result<File, Error>
+    Block
+      FinalExpr
+        Call
+          Name open
+          Name path
+          Arg create
+            BoolLiteral true
+          Arg truncate
+            BoolLiteral false

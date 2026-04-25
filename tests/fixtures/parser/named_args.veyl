@@ -1,0 +1,3 @@
+fn configure(path: Path) -> Result<File, Error> {
+    open(path, create: true, truncate: false)
+}

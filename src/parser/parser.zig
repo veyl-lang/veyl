@@ -756,14 +756,14 @@ const Parser = struct {
                     .span = span,
                 } });
             } else if (self.match(.l_paren)) |_| {
-                const args_start = self.tree.reserveExprArgs();
+                const args_start = self.tree.reserveCallArgs();
                 var args_len: u32 = 0;
                 var end_span = self.tree.exprs.items[expr].span();
                 while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
-                    const arg = try self.parseExpression(@intFromEnum(Precedence.lowest));
-                    try self.tree.addExprArg(arg);
+                    const arg = try self.parseCallArg();
+                    try self.tree.addCallArg(arg);
                     args_len += 1;
-                    end_span = self.tree.exprs.items[arg].span();
+                    end_span = arg.span;
                     if (self.match(.comma) == null) break;
                 }
                 if (self.match(.r_paren)) |paren| {
@@ -829,6 +829,26 @@ const Parser = struct {
         }
 
         return expr;
+    }
+
+    fn parseCallArg(self: *Parser) Allocator.Error!ast_mod.CallArg {
+        if (self.peekKind() == .identifier and self.peekKindAt(1) == .colon) {
+            const name_token = self.advance();
+            _ = self.advance();
+            const value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+            return .{
+                .name = try self.internToken(name_token),
+                .name_span = name_token.span,
+                .value = value,
+                .span = base.Span.join(name_token.span, self.tree.exprs.items[value].span()),
+            };
+        }
+
+        const value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+        return .{
+            .value = value,
+            .span = self.tree.exprs.items[value].span(),
+        };
     }
 
     fn parsePrimary(self: *Parser) Allocator.Error!ast_mod.ExprId {
@@ -1651,6 +1671,12 @@ const Parser = struct {
 
     fn peekKind(self: *const Parser) lexer.TokenKind {
         return self.peek().kind;
+    }
+
+    fn peekKindAt(self: *const Parser, offset: usize) lexer.TokenKind {
+        const token_index = self.index + offset;
+        if (token_index >= self.tokens.len) return self.tokens[self.tokens.len - 1].kind;
+        return self.tokens[token_index].kind;
     }
 
     fn peek(self: *const Parser) lexer.Token {

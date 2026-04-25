@@ -270,6 +270,13 @@ pub const StructLiteralField = struct {
     span: base.Span,
 };
 
+pub const CallArg = struct {
+    name: ?base.SymbolId = null,
+    name_span: ?base.Span = null,
+    value: ExprId,
+    span: base.Span,
+};
+
 pub const ControlCondition = union(enum) {
     expr: ExprId,
     let_pattern: struct { pattern: PatternId, value: ExprId, span: base.Span },
@@ -452,6 +459,7 @@ pub const Ast = struct {
     interface_methods: std.ArrayListUnmanaged(InterfaceMethod) = .empty,
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
+    call_args: std.ArrayListUnmanaged(CallArg) = .empty,
     struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
     patterns: std.ArrayListUnmanaged(Pattern) = .empty,
     pattern_args: std.ArrayListUnmanaged(PatternId) = .empty,
@@ -484,6 +492,7 @@ pub const Ast = struct {
         self.interface_methods.deinit(self.allocator);
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
+        self.call_args.deinit(self.allocator);
         self.struct_literal_fields.deinit(self.allocator);
         self.patterns.deinit(self.allocator);
         self.pattern_args.deinit(self.allocator);
@@ -590,6 +599,14 @@ pub const Ast = struct {
 
     pub fn addExprArg(self: *Ast, expr: ExprId) Allocator.Error!void {
         try self.expr_args.append(self.allocator, expr);
+    }
+
+    pub fn reserveCallArgs(self: *const Ast) u32 {
+        return @intCast(self.call_args.items.len);
+    }
+
+    pub fn addCallArg(self: *Ast, arg: CallArg) Allocator.Error!void {
+        try self.call_args.append(self.allocator, arg);
     }
 
     pub fn reserveStructLiteralFields(self: *const Ast) u32 {
@@ -884,8 +901,14 @@ fn dumpExpr(
             try dumpExpr(writer, ast, interner, call.callee, indent + 1);
             const start: usize = @intCast(call.args.start);
             const end: usize = @intCast(call.args.end());
-            for (ast.expr_args.items[start..end]) |arg| {
-                try dumpExpr(writer, ast, interner, arg, indent + 1);
+            for (ast.call_args.items[start..end]) |arg| {
+                if (arg.name) |name| {
+                    try writeIndent(writer, indent + 1);
+                    try writer.print("Arg {s}\n", .{interner.get(name) orelse "<missing>"});
+                    try dumpExpr(writer, ast, interner, arg.value, indent + 2);
+                } else {
+                    try dumpExpr(writer, ast, interner, arg.value, indent + 1);
+                }
             }
         },
         .index => |index| {
