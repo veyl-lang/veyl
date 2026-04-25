@@ -41,14 +41,45 @@ pub const StructDecl = struct {
     span: base.Span,
 };
 
+pub const EnumField = struct {
+    name: ?base.SymbolId = null,
+    name_span: ?base.Span = null,
+    type_path: base.Range,
+    span: base.Span,
+};
+
+pub const EnumVariantKind = enum {
+    unit,
+    tuple,
+    record,
+};
+
+pub const EnumVariant = struct {
+    name: base.SymbolId,
+    name_span: base.Span,
+    kind: EnumVariantKind,
+    fields: base.Range = .{ .start = 0, .len = 0 },
+    span: base.Span,
+};
+
+pub const EnumDecl = struct {
+    visibility: Visibility,
+    name: base.SymbolId,
+    name_span: base.Span,
+    variants: base.Range,
+    span: base.Span,
+};
+
 pub const Decl = union(enum) {
     import: ImportDecl,
     struct_decl: StructDecl,
+    enum_decl: EnumDecl,
 
     pub fn span(self: Decl) base.Span {
         return switch (self) {
             .import => |decl| decl.span,
             .struct_decl => |decl| decl.span,
+            .enum_decl => |decl| decl.span,
         };
     }
 };
@@ -59,6 +90,8 @@ pub const Ast = struct {
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
     struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
+    enum_variants: std.ArrayListUnmanaged(EnumVariant) = .empty,
+    enum_fields: std.ArrayListUnmanaged(EnumField) = .empty,
 
     pub fn init(allocator: Allocator, source: base.SourceId) Ast {
         return .{
@@ -71,6 +104,8 @@ pub const Ast = struct {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
         self.struct_fields.deinit(self.allocator);
+        self.enum_variants.deinit(self.allocator);
+        self.enum_fields.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -95,6 +130,22 @@ pub const Ast = struct {
     pub fn addStructField(self: *Ast, field: StructField) Allocator.Error!void {
         try self.struct_fields.append(self.allocator, field);
     }
+
+    pub fn reserveEnumVariants(self: *const Ast) u32 {
+        return @intCast(self.enum_variants.items.len);
+    }
+
+    pub fn addEnumVariant(self: *Ast, variant: EnumVariant) Allocator.Error!void {
+        try self.enum_variants.append(self.allocator, variant);
+    }
+
+    pub fn reserveEnumFields(self: *const Ast) u32 {
+        return @intCast(self.enum_fields.items.len);
+    }
+
+    pub fn addEnumField(self: *Ast, field: EnumField) Allocator.Error!void {
+        try self.enum_fields.append(self.allocator, field);
+    }
 };
 
 pub fn dumpAst(allocator: Allocator, ast: *const Ast, interner: *const base.Interner) DumpError![]u8 {
@@ -106,10 +157,45 @@ pub fn dumpAst(allocator: Allocator, ast: *const Ast, interner: *const base.Inte
         switch (decl) {
             .import => |import_decl| try dumpImport(&output.writer, ast, interner, import_decl),
             .struct_decl => |struct_decl| try dumpStruct(&output.writer, ast, interner, struct_decl),
+            .enum_decl => |enum_decl| try dumpEnum(&output.writer, ast, interner, enum_decl),
         }
     }
 
     return output.toOwnedSlice();
+}
+
+fn dumpEnum(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    enum_decl: EnumDecl,
+) std.Io.Writer.Error!void {
+    try writer.print("  EnumDecl {s} {s}\n", .{
+        @tagName(enum_decl.visibility),
+        interner.get(enum_decl.name) orelse "<missing>",
+    });
+
+    const start: usize = @intCast(enum_decl.variants.start);
+    const end: usize = @intCast(enum_decl.variants.end());
+    for (ast.enum_variants.items[start..end]) |variant| {
+        try writer.print("    Variant {s} {s}\n", .{
+            @tagName(variant.kind),
+            interner.get(variant.name) orelse "<missing>",
+        });
+
+        const field_start: usize = @intCast(variant.fields.start);
+        const field_end: usize = @intCast(variant.fields.end());
+        for (ast.enum_fields.items[field_start..field_end]) |field| {
+            try writer.writeAll("      Field ");
+            if (field.name) |name| {
+                try writer.print("{s}: ", .{interner.get(name) orelse "<missing>"});
+            } else {
+                try writer.writeAll("_: ");
+            }
+            try dumpPath(writer, ast, interner, field.type_path);
+            try writer.writeByte('\n');
+        }
+    }
 }
 
 fn dumpStruct(
@@ -223,6 +309,55 @@ test "AST dump renders struct declarations" {
         "Root\n" ++
             "  StructDecl public User\n" ++
             "    Field public name: Str\n",
+        dumped,
+    );
+}
+
+test "AST dump renders enum declarations" {
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = Ast.init(std.testing.allocator, 0);
+    defer tree.deinit();
+
+    const variants_start = tree.reserveEnumVariants();
+    const fields_start = tree.reserveEnumFields();
+    const int_type_start = tree.reservePath();
+    try tree.addPathSegment(.{ .name = try interner.intern("Int"), .span = .{ .source = 0, .start = 22, .len = 3 } });
+    try tree.addEnumField(.{
+        .type_path = .{ .start = int_type_start, .len = 1 },
+        .span = .{ .source = 0, .start = 22, .len = 3 },
+    });
+    try tree.addEnumVariant(.{
+        .name = try interner.intern("Some"),
+        .name_span = .{ .source = 0, .start = 17, .len = 4 },
+        .kind = .tuple,
+        .fields = .{ .start = fields_start, .len = 1 },
+        .span = .{ .source = 0, .start = 17, .len = 9 },
+    });
+    try tree.addEnumVariant(.{
+        .name = try interner.intern("None"),
+        .name_span = .{ .source = 0, .start = 29, .len = 4 },
+        .kind = .unit,
+        .span = .{ .source = 0, .start = 29, .len = 4 },
+    });
+    _ = try tree.addDecl(.{ .enum_decl = .{
+        .visibility = .package,
+        .name = try interner.intern("MaybeInt"),
+        .name_span = .{ .source = 0, .start = 5, .len = 8 },
+        .variants = .{ .start = variants_start, .len = 2 },
+        .span = .{ .source = 0, .start = 0, .len = 36 },
+    } });
+
+    const dumped = try dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  EnumDecl package MaybeInt\n" ++
+            "    Variant tuple Some\n" ++
+            "      Field _: Int\n" ++
+            "    Variant unit None\n",
         dumped,
     );
 }

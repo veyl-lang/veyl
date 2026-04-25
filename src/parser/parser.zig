@@ -54,6 +54,8 @@ const Parser = struct {
                 try self.parseImport(visibility, start_span);
             } else if (self.peekKind() == .keyword_struct) {
                 try self.parseStruct(visibility, start_span);
+            } else if (self.peekKind() == .keyword_enum) {
+                try self.parseEnum(visibility, start_span);
             } else {
                 try self.addError(self.peek().span, "expected top-level declaration");
                 _ = self.advance();
@@ -99,6 +101,140 @@ const Parser = struct {
             .alias_span = alias_span,
             .span = base.Span.join(start_span, end_span),
         } });
+    }
+
+    fn parseEnum(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_enum, "expected enum declaration")) orelse return;
+        const name_token = (try self.expectIdentifier("expected enum name")) orelse return;
+        const name = try self.internToken(name_token);
+
+        _ = (try self.expect(.l_brace, "expected `{` after enum name")) orelse return;
+
+        const variants_start = self.tree.reserveEnumVariants();
+        var variants_len: u32 = 0;
+        var end_span = name_token.span;
+
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            self.skipTrivia();
+            if (self.peekKind() == .r_brace or self.peekKind() == .eof) break;
+
+            const variant = try self.parseEnumVariant();
+            try self.tree.addEnumVariant(variant);
+            variants_len += 1;
+            end_span = variant.span;
+
+            if (self.match(.comma)) |comma| {
+                end_span = comma.span;
+            }
+        }
+
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after enum variants");
+        }
+
+        _ = try self.tree.addDecl(.{ .enum_decl = .{
+            .visibility = visibility,
+            .name = name,
+            .name_span = name_token.span,
+            .variants = .{ .start = variants_start, .len = variants_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parseEnumVariant(self: *Parser) Allocator.Error!ast_mod.EnumVariant {
+        const name_token = (try self.expectIdentifier("expected enum variant name")) orelse return .{
+            .name = try self.interner.intern("<error>"),
+            .name_span = self.peek().span,
+            .kind = .unit,
+            .span = self.peek().span,
+        };
+        const name = try self.internToken(name_token);
+
+        if (self.match(.l_paren) != null) {
+            const fields_start = self.tree.reserveEnumFields();
+            var fields_len: u32 = 0;
+            var end_span = name_token.span;
+
+            while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
+                const type_path = try self.parsePath("expected tuple variant field type");
+                const field_end = self.previous().span;
+                try self.tree.addEnumField(.{
+                    .type_path = type_path,
+                    .span = field_end,
+                });
+                fields_len += 1;
+                end_span = field_end;
+
+                if (self.match(.comma) == null) break;
+            }
+
+            if (self.match(.r_paren)) |paren| {
+                end_span = paren.span;
+            } else {
+                try self.addError(self.peek().span, "expected `)` after tuple variant fields");
+            }
+
+            return .{
+                .name = name,
+                .name_span = name_token.span,
+                .kind = .tuple,
+                .fields = .{ .start = fields_start, .len = fields_len },
+                .span = base.Span.join(name_token.span, end_span),
+            };
+        }
+
+        if (self.match(.l_brace) != null) {
+            const fields_start = self.tree.reserveEnumFields();
+            var fields_len: u32 = 0;
+            var end_span = name_token.span;
+
+            while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+                const field_name_token = (try self.expectIdentifier("expected record variant field name")) orelse break;
+                _ = (try self.expect(.colon, "expected `:` after record variant field name")) orelse return .{
+                    .name = name,
+                    .name_span = name_token.span,
+                    .kind = .record,
+                    .fields = .{ .start = fields_start, .len = fields_len },
+                    .span = name_token.span,
+                };
+
+                const type_path = try self.parsePath("expected record variant field type");
+                const field_end = self.previous().span;
+                try self.tree.addEnumField(.{
+                    .name = try self.internToken(field_name_token),
+                    .name_span = field_name_token.span,
+                    .type_path = type_path,
+                    .span = base.Span.join(field_name_token.span, field_end),
+                });
+                fields_len += 1;
+                end_span = field_end;
+
+                if (self.match(.comma) == null) break;
+            }
+
+            if (self.match(.r_brace)) |brace| {
+                end_span = brace.span;
+            } else {
+                try self.addError(self.peek().span, "expected `}` after record variant fields");
+            }
+
+            return .{
+                .name = name,
+                .name_span = name_token.span,
+                .kind = .record,
+                .fields = .{ .start = fields_start, .len = fields_len },
+                .span = base.Span.join(name_token.span, end_span),
+            };
+        }
+
+        return .{
+            .name = name,
+            .name_span = name_token.span,
+            .kind = .unit,
+            .span = name_token.span,
+        };
     }
 
     fn parseStruct(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
@@ -309,6 +445,47 @@ test "parser builds struct AST" {
             "  StructDecl public User\n" ++
             "    Field public name: Str\n" ++
             "    Field private password_hash: Str\n",
+        dumped,
+    );
+}
+
+test "parser builds enum AST" {
+    const source =
+        \\pub enum Shape {
+        \\    Circle { radius: Float },
+        \\    Pair(Int, Int),
+        \\    Point,
+        \\}
+        \\
+    ;
+
+    var diagnostics = diag.DiagnosticBag.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var tokens = try lexer.lex(std.testing.allocator, 0, source, &diagnostics);
+    defer tokens.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var interner = base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = try parse(std.testing.allocator, 0, source, tokens.tokens.items, &interner, &diagnostics);
+    defer tree.deinit();
+
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    const dumped = try ast_mod.dumpAst(std.testing.allocator, &tree, &interner);
+    defer std.testing.allocator.free(dumped);
+
+    try std.testing.expectEqualStrings(
+        "Root\n" ++
+            "  EnumDecl public Shape\n" ++
+            "    Variant record Circle\n" ++
+            "      Field radius: Float\n" ++
+            "    Variant tuple Pair\n" ++
+            "      Field _: Int\n" ++
+            "      Field _: Int\n" ++
+            "    Variant unit Point\n",
         dumped,
     );
 }

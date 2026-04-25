@@ -1,0 +1,11 @@
+Root
+  EnumDecl public Shape
+    Variant record Circle
+      Field radius: Float
+    Variant record Rect
+      Field width: Float
+      Field height: Float
+    Variant tuple Pair
+      Field _: Int
+      Field _: Int
+    Variant unit Point

@@ -9,6 +9,9 @@ pub const PathSegment = ast.PathSegment;
 pub const ImportDecl = ast.ImportDecl;
 pub const StructDecl = ast.StructDecl;
 pub const StructField = ast.StructField;
+pub const EnumDecl = ast.EnumDecl;
+pub const EnumVariant = ast.EnumVariant;
+pub const EnumField = ast.EnumField;
 pub const dumpAst = ast.dumpAst;
 pub const parse = parser.parse;
 

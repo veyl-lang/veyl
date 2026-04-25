@@ -1,0 +1,6 @@
+pub enum Shape {
+    Circle { radius: Float },
+    Rect { width: Float, height: Float },
+    Pair(Int, Int),
+    Point,
+}
