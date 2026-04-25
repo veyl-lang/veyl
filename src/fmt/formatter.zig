@@ -13,11 +13,96 @@ pub fn formatAst(allocator: Allocator, ast: *const ast_mod.Ast, interner: *const
         switch (decl) {
             .import => |import_decl| try formatImport(&output.writer, ast, interner, import_decl),
             .type_alias => |type_alias| try formatTypeAlias(&output.writer, ast, interner, type_alias),
+            .struct_decl => |struct_decl| try formatStruct(&output.writer, ast, interner, struct_decl),
+            .enum_decl => |enum_decl| try formatEnum(&output.writer, ast, interner, enum_decl),
             else => {},
         }
     }
 
     return output.toOwnedSlice();
+}
+
+fn formatStruct(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    struct_decl: ast_mod.StructDecl,
+) std.Io.Writer.Error!void {
+    try writeVisibility(writer, struct_decl.visibility);
+    try writer.writeAll("struct ");
+    try writer.writeAll(interner.get(struct_decl.name) orelse "<missing>");
+    try writeGenericParams(writer, ast, interner, struct_decl.generic_params);
+    try writer.writeAll(" {\n");
+
+    const start: usize = @intCast(struct_decl.fields.start);
+    const end: usize = @intCast(struct_decl.fields.end());
+    for (ast.struct_fields.items[start..end]) |field| {
+        try writer.writeAll("    ");
+        if (field.visibility == .private) try writer.writeAll("private ");
+        try writer.writeAll(interner.get(field.name) orelse "<missing>");
+        try writer.writeAll(": ");
+        try writeTypeExpr(writer, ast, interner, field.type_expr);
+        try writer.writeAll(",\n");
+    }
+
+    try writer.writeAll("}\n");
+}
+
+fn formatEnum(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    enum_decl: ast_mod.EnumDecl,
+) std.Io.Writer.Error!void {
+    try writeVisibility(writer, enum_decl.visibility);
+    try writer.writeAll("enum ");
+    try writer.writeAll(interner.get(enum_decl.name) orelse "<missing>");
+    try writeGenericParams(writer, ast, interner, enum_decl.generic_params);
+    try writer.writeAll(" {\n");
+
+    const start: usize = @intCast(enum_decl.variants.start);
+    const end: usize = @intCast(enum_decl.variants.end());
+    for (ast.enum_variants.items[start..end]) |variant| {
+        try writer.writeAll("    ");
+        try writer.writeAll(interner.get(variant.name) orelse "<missing>");
+        switch (variant.kind) {
+            .unit => {},
+            .tuple => {
+                try writer.writeByte('(');
+                try writeEnumFields(writer, ast, interner, variant.fields, false);
+                try writer.writeByte(')');
+            },
+            .record => {
+                try writer.writeAll(" { ");
+                try writeEnumFields(writer, ast, interner, variant.fields, true);
+                try writer.writeAll(" }");
+            },
+        }
+        try writer.writeAll(",\n");
+    }
+
+    try writer.writeAll("}\n");
+}
+
+fn writeEnumFields(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    fields: base.Range,
+    include_names: bool,
+) std.Io.Writer.Error!void {
+    const start: usize = @intCast(fields.start);
+    const end: usize = @intCast(fields.end());
+    for (ast.enum_fields.items[start..end], 0..) |field, index| {
+        if (index != 0) try writer.writeAll(", ");
+        if (include_names) {
+            if (field.name) |name| {
+                try writer.writeAll(interner.get(name) orelse "<missing>");
+                try writer.writeAll(": ");
+            }
+        }
+        try writeTypeExpr(writer, ast, interner, field.type_expr);
+    }
 }
 
 fn formatTypeAlias(

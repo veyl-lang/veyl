@@ -1,0 +1,10 @@
+pub struct User {
+    id: UserId,
+    name: Str,
+    private password_hash: Str,
+}
+enum Shape<T> {
+    Circle { radius: Float },
+    Pair(T, T),
+    Point,
+}
