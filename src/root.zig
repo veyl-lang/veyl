@@ -7,6 +7,7 @@ pub const host = @import("host.zig");
 pub const lexer = @import("lexer.zig");
 pub const parser = @import("parser.zig");
 pub const resolve = @import("resolve.zig");
+pub const runtime = @import("runtime.zig");
 pub const typeck = @import("typeck.zig");
 
 pub const version = "0.0.1";
@@ -21,6 +22,7 @@ test {
     _ = lexer;
     _ = parser;
     _ = resolve;
+    _ = runtime;
     _ = typeck;
 }
 
