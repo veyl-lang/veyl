@@ -74,6 +74,8 @@ const Parser = struct {
 
         const path_start = self.tree.reservePath();
         var path_len: u32 = 0;
+        var items_start: u32 = 0;
+        var items_len: u32 = 0;
 
         while (true) {
             const segment_token = (try self.expectIdentifier("expected import path segment")) orelse break;
@@ -87,11 +89,49 @@ const Parser = struct {
 
             if (self.match(.dot) == null) break;
             end_span = self.previous().span;
+            if (self.match(.l_brace)) |_| {
+                items_start = self.tree.reserveImportItems();
+                while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+                    const item_token = (try self.expectIdentifier("expected grouped import item")) orelse break;
+                    var item_end = item_token.span;
+                    var alias: ?base.SymbolId = null;
+                    var alias_span: ?base.Span = null;
+                    if (self.match(.keyword_as) != null) {
+                        const alias_token = (try self.expectIdentifier("expected import alias after `as`")) orelse break;
+                        alias = try self.internToken(alias_token);
+                        alias_span = alias_token.span;
+                        item_end = alias_token.span;
+                    }
+
+                    try self.tree.addImportItem(.{
+                        .name = try self.internToken(item_token),
+                        .name_span = item_token.span,
+                        .alias = alias,
+                        .alias_span = alias_span,
+                        .span = base.Span.join(item_token.span, item_end),
+                    });
+                    items_len += 1;
+                    end_span = item_end;
+
+                    if (self.match(.comma)) |comma| {
+                        end_span = comma.span;
+                        continue;
+                    }
+                    break;
+                }
+
+                if (self.match(.r_brace)) |brace| {
+                    end_span = brace.span;
+                } else {
+                    try self.addError(self.peek().span, "expected `}` after grouped import items");
+                }
+                break;
+            }
         }
 
         var alias: ?base.SymbolId = null;
         var alias_span: ?base.Span = null;
-        if (self.match(.keyword_as)) |_| {
+        if (items_len == 0 and self.match(.keyword_as) != null) {
             const alias_token = (try self.expectIdentifier("expected import alias after `as`")) orelse return;
             alias = try self.internToken(alias_token);
             alias_span = alias_token.span;
@@ -102,6 +142,7 @@ const Parser = struct {
         _ = try self.tree.addDecl(.{ .import = .{
             .visibility = visibility,
             .path = .{ .start = path_start, .len = path_len },
+            .items = .{ .start = items_start, .len = items_len },
             .alias = alias,
             .alias_span = alias_span,
             .span = base.Span.join(start_span, end_span),

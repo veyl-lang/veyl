@@ -7,6 +7,7 @@ pub const DeclId = ast.DeclId;
 pub const Visibility = ast.Visibility;
 pub const PathSegment = ast.PathSegment;
 pub const ImportDecl = ast.ImportDecl;
+pub const ImportItem = ast.ImportItem;
 pub const TypeAliasDecl = ast.TypeAliasDecl;
 pub const FnDecl = ast.FnDecl;
 pub const FnParam = ast.FnParam;

@@ -24,6 +24,15 @@ pub const PathSegment = struct {
 pub const ImportDecl = struct {
     visibility: Visibility,
     path: base.Range,
+    items: base.Range = .{ .start = 0, .len = 0 },
+    alias: ?base.SymbolId = null,
+    alias_span: ?base.Span = null,
+    span: base.Span,
+};
+
+pub const ImportItem = struct {
+    name: base.SymbolId,
+    name_span: base.Span,
     alias: ?base.SymbolId = null,
     alias_span: ?base.Span = null,
     span: base.Span,
@@ -277,6 +286,7 @@ pub const Ast = struct {
     source: base.SourceId,
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
+    import_items: std.ArrayListUnmanaged(ImportItem) = .empty,
     types: std.ArrayListUnmanaged(TypeExpr) = .empty,
     type_args: std.ArrayListUnmanaged(TypeId) = .empty,
     fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
@@ -300,6 +310,7 @@ pub const Ast = struct {
     pub fn deinit(self: *Ast) void {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
+        self.import_items.deinit(self.allocator);
         self.types.deinit(self.allocator);
         self.type_args.deinit(self.allocator);
         self.fn_params.deinit(self.allocator);
@@ -327,6 +338,14 @@ pub const Ast = struct {
 
     pub fn reservePath(self: *const Ast) u32 {
         return @intCast(self.path_segments.items.len);
+    }
+
+    pub fn reserveImportItems(self: *const Ast) u32 {
+        return @intCast(self.import_items.items.len);
+    }
+
+    pub fn addImportItem(self: *Ast, item: ImportItem) Allocator.Error!void {
+        try self.import_items.append(self.allocator, item);
     }
 
     pub fn addType(self: *Ast, type_expr: TypeExpr) Allocator.Error!TypeId {
@@ -733,6 +752,17 @@ fn dumpImport(
     try writer.writeAll("    path ");
     try dumpPath(writer, ast, interner, import_decl.path);
     try writer.writeByte('\n');
+    if (import_decl.items.len != 0) {
+        try writer.writeAll("    items\n");
+        const start: usize = @intCast(import_decl.items.start);
+        const end: usize = @intCast(import_decl.items.end());
+        for (ast.import_items.items[start..end]) |item| {
+            try writer.print("      {s}\n", .{interner.get(item.name) orelse "<missing>"});
+            if (item.alias) |alias| {
+                try writer.print("        alias {s}\n", .{interner.get(alias) orelse "<missing>"});
+            }
+        }
+    }
     if (import_decl.alias) |alias| {
         try writer.print("    alias {s}\n", .{interner.get(alias) orelse "<missing>"});
     }

@@ -1,6 +1,8 @@
 //! Public imports for parser fixture.
 pub import std.fs
 pub import std.path.Path
+pub import http.router.{Router, Route}
 
 import config.Config as AppConfig
+import auth.{Token, verify_token as verify}
 private import internal.secret.Token
