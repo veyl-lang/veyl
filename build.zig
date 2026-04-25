@@ -65,11 +65,22 @@ pub fn build(b: *std.Build) void {
     fmt_fixture_tests.root_module.addImport("veyl", veyl_mod);
     const run_fmt_fixture_tests = b.addRunArtifact(fmt_fixture_tests);
 
+    const diagnostic_fixture_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("tests/diagnostic_fixtures.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    diagnostic_fixture_tests.root_module.addImport("veyl", veyl_mod);
+    const run_diagnostic_fixture_tests = b.addRunArtifact(diagnostic_fixture_tests);
+
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);
     test_step.dependOn(&run_lexer_fixture_tests.step);
     test_step.dependOn(&run_parser_fixture_tests.step);
     test_step.dependOn(&run_fmt_fixture_tests.step);
+    test_step.dependOn(&run_diagnostic_fixture_tests.step);
 
     const fmt_step = b.step("fmt", "Format Zig source");
     fmt_step.dependOn(&b.addFmt(.{
@@ -96,5 +107,6 @@ pub fn build(b: *std.Build) void {
     check_step.dependOn(&lexer_fixture_tests.step);
     check_step.dependOn(&parser_fixture_tests.step);
     check_step.dependOn(&fmt_fixture_tests.step);
+    check_step.dependOn(&diagnostic_fixture_tests.step);
     check_step.dependOn(fmt_check_step);
 }
