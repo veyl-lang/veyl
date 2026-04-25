@@ -237,6 +237,22 @@ pub const Vm = struct {
                 },
                 else => return error.TypeMismatch,
             },
+            .char => |left_char| switch (right) {
+                .char => |right_char| switch (op) {
+                    .equal => left_char == right_char,
+                    .not_equal => left_char != right_char,
+                    else => return error.TypeMismatch,
+                },
+                else => return error.TypeMismatch,
+            },
+            .string => |left_string| switch (right) {
+                .string => |right_string| switch (op) {
+                    .equal => std.mem.eql(u8, left_string, right_string),
+                    .not_equal => !std.mem.eql(u8, left_string, right_string),
+                    else => return error.TypeMismatch,
+                },
+                else => return error.TypeMismatch,
+            },
             else => return error.TypeMismatch,
         };
         try self.stack.append(self.allocator, .{ .bool = result });
