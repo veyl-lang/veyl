@@ -41,7 +41,7 @@ pub fn checkModule(allocator: std.mem.Allocator, module: *const hir.Hir, interne
             .test_decl => |test_decl| {
                 var env = TypeEnv{};
                 defer env.deinit(allocator);
-                _ = try checkBlock(allocator, module, interner, &functions, &env, test_decl.body, diagnostics);
+                _ = try checkBlock(allocator, module, interner, &functions, &env, test_decl.body, .unit, diagnostics);
             },
             .impl_decl => |impl_decl| {
                 const start: usize = @intCast(impl_decl.methods.start);
@@ -65,8 +65,8 @@ fn checkFunction(allocator: std.mem.Allocator, module: *const hir.Hir, interner:
         try env.put(allocator, param.name, typeFromAnnotation(module, interner, param.type_expr));
     }
 
-    const actual = try checkBlock(allocator, module, interner, functions, &env, function.body, diagnostics);
     const expected = if (function.return_type) |return_type| typeFromAnnotation(module, interner, return_type) else Type.unit;
+    const actual = try checkBlock(allocator, module, interner, functions, &env, function.body, expected, diagnostics);
     if (expected != .unknown and actual != .unknown and expected != actual) {
         try diagnostics.add(.{
             .severity = .err,
@@ -76,48 +76,59 @@ fn checkFunction(allocator: std.mem.Allocator, module: *const hir.Hir, interner:
     }
 }
 
-fn checkBlock(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, block_id: hir.ir.BlockId, diagnostics: *diag.DiagnosticBag) CheckError!Type {
+fn checkBlock(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, block_id: hir.ir.BlockId, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!Type {
     const block = module.blocks.items[block_id];
     const start: usize = @intCast(block.stmts.start);
     const end: usize = @intCast(block.stmts.end());
     for (module.block_stmt_ids.items[start..end]) |stmt_id| {
-        try checkStmt(allocator, module, interner, functions, env, module.stmts.items[stmt_id], diagnostics);
+        try checkStmt(allocator, module, interner, functions, env, module.stmts.items[stmt_id], expected_return, diagnostics);
     }
-    if (block.final_expr) |final_expr| return try inferExpr(allocator, module, interner, functions, env, final_expr, diagnostics);
+    if (block.final_expr) |final_expr| return try inferExpr(allocator, module, interner, functions, env, final_expr, expected_return, diagnostics);
+    if (block.stmts.len != 0) {
+        const last_stmt_id = module.block_stmt_ids.items[end - 1];
+        if (module.stmts.items[last_stmt_id] == .return_stmt) return expected_return;
+    }
     return .unit;
 }
 
-fn checkStmt(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, stmt: hir.ir.Stmt, diagnostics: *diag.DiagnosticBag) CheckError!void {
+fn checkStmt(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, stmt: hir.ir.Stmt, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!void {
     switch (stmt) {
         .let_stmt => |let_stmt| {
-            const value_type = try inferExpr(allocator, module, interner, functions, env, let_stmt.value, diagnostics);
-            if (let_stmt.else_block) |else_block| _ = try checkBlock(allocator, module, interner, functions, env, else_block, diagnostics);
+            const value_type = try inferExpr(allocator, module, interner, functions, env, let_stmt.value, expected_return, diagnostics);
+            if (let_stmt.else_block) |else_block| _ = try checkBlock(allocator, module, interner, functions, env, else_block, expected_return, diagnostics);
             if (let_stmt.name) |name| try env.put(allocator, name, value_type);
         },
         .return_stmt => |return_stmt| {
-            if (return_stmt.value) |value| _ = try inferExpr(allocator, module, interner, functions, env, value, diagnostics);
+            const actual = if (return_stmt.value) |value| try inferExpr(allocator, module, interner, functions, env, value, expected_return, diagnostics) else Type.unit;
+            if (expected_return != .unknown and actual != .unknown and expected_return != actual) {
+                try diagnostics.add(.{
+                    .severity = .err,
+                    .span = return_stmt.span,
+                    .message = "return value type does not match function return type",
+                });
+            }
         },
         .while_stmt => |while_stmt| {
-            try checkCondition(allocator, module, interner, functions, env, while_stmt.condition, diagnostics);
-            _ = try checkBlock(allocator, module, interner, functions, env, while_stmt.body, diagnostics);
+            try checkCondition(allocator, module, interner, functions, env, while_stmt.condition, expected_return, diagnostics);
+            _ = try checkBlock(allocator, module, interner, functions, env, while_stmt.body, expected_return, diagnostics);
         },
         .for_stmt => |for_stmt| {
-            _ = try inferExpr(allocator, module, interner, functions, env, for_stmt.iterable, diagnostics);
+            _ = try inferExpr(allocator, module, interner, functions, env, for_stmt.iterable, expected_return, diagnostics);
             if (for_stmt.name) |name| try env.put(allocator, name, .unknown);
-            _ = try checkBlock(allocator, module, interner, functions, env, for_stmt.body, diagnostics);
+            _ = try checkBlock(allocator, module, interner, functions, env, for_stmt.body, expected_return, diagnostics);
         },
-        .defer_stmt => |defer_stmt| _ = try checkBlock(allocator, module, interner, functions, env, defer_stmt.body, diagnostics),
+        .defer_stmt => |defer_stmt| _ = try checkBlock(allocator, module, interner, functions, env, defer_stmt.body, expected_return, diagnostics),
         .expr_stmt => |expr| {
-            _ = try inferExpr(allocator, module, interner, functions, env, expr, diagnostics);
+            _ = try inferExpr(allocator, module, interner, functions, env, expr, expected_return, diagnostics);
         },
         .break_stmt, .continue_stmt, .unsupported => {},
     }
 }
 
-fn checkCondition(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, condition: hir.ir.ControlCondition, diagnostics: *diag.DiagnosticBag) CheckError!void {
+fn checkCondition(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, condition: hir.ir.ControlCondition, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!void {
     switch (condition) {
         .expr => |expr| {
-            const condition_type = try inferExpr(allocator, module, interner, functions, env, expr, diagnostics);
+            const condition_type = try inferExpr(allocator, module, interner, functions, env, expr, expected_return, diagnostics);
             if (condition_type != .unknown and condition_type != .bool) {
                 try diagnostics.add(.{
                     .severity = .err,
@@ -127,12 +138,12 @@ fn checkCondition(allocator: std.mem.Allocator, module: *const hir.Hir, interner
             }
         },
         .let_pattern => |let_pattern| {
-            _ = try inferExpr(allocator, module, interner, functions, env, let_pattern.value, diagnostics);
+            _ = try inferExpr(allocator, module, interner, functions, env, let_pattern.value, expected_return, diagnostics);
         },
     }
 }
 
-fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, expr_id: hir.ir.ExprId, diagnostics: *diag.DiagnosticBag) CheckError!Type {
+fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, expr_id: hir.ir.ExprId, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!Type {
     return switch (module.exprs.items[expr_id]) {
         .name => |name| env.get(name.symbol) orelse .unknown,
         .int_literal => .int,
@@ -141,30 +152,30 @@ fn inferExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *co
         .char_literal => .char,
         .bool_literal => .bool,
         .unit_literal => .unit,
-        .binary => |binary| try inferBinaryExpr(allocator, module, interner, functions, env, binary, diagnostics),
+        .binary => |binary| try inferBinaryExpr(allocator, module, interner, functions, env, binary, expected_return, diagnostics),
         .if_expr => |if_expr| {
-            try checkCondition(allocator, module, interner, functions, env, if_expr.condition, diagnostics);
-            _ = try checkBlock(allocator, module, interner, functions, env, if_expr.then_block, diagnostics);
-            if (if_expr.else_block) |else_block| _ = try checkBlock(allocator, module, interner, functions, env, else_block, diagnostics);
+            try checkCondition(allocator, module, interner, functions, env, if_expr.condition, expected_return, diagnostics);
+            _ = try checkBlock(allocator, module, interner, functions, env, if_expr.then_block, expected_return, diagnostics);
+            if (if_expr.else_block) |else_block| _ = try checkBlock(allocator, module, interner, functions, env, else_block, expected_return, diagnostics);
             return .unknown;
         },
         .block_expr => |block_expr| {
-            return try checkBlock(allocator, module, interner, functions, env, block_expr.block, diagnostics);
+            return try checkBlock(allocator, module, interner, functions, env, block_expr.block, expected_return, diagnostics);
         },
         .match_expr => |match_expr| {
-            _ = try inferExpr(allocator, module, interner, functions, env, match_expr.value, diagnostics);
+            _ = try inferExpr(allocator, module, interner, functions, env, match_expr.value, expected_return, diagnostics);
             return .unknown;
         },
-        .try_expr => |try_expr| try inferExpr(allocator, module, interner, functions, env, try_expr.value, diagnostics),
-        .catch_expr => |catch_expr| try inferExpr(allocator, module, interner, functions, env, catch_expr.value, diagnostics),
-        .call => |call| try inferCallExpr(allocator, module, interner, functions, env, call, diagnostics),
+        .try_expr => |try_expr| try inferExpr(allocator, module, interner, functions, env, try_expr.value, expected_return, diagnostics),
+        .catch_expr => |catch_expr| try inferExpr(allocator, module, interner, functions, env, catch_expr.value, expected_return, diagnostics),
+        .call => |call| try inferCallExpr(allocator, module, interner, functions, env, call, expected_return, diagnostics),
         .array_literal, .struct_literal, .index, .field, .unsupported => .unknown,
     };
 }
 
-fn inferBinaryExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, binary: anytype, diagnostics: *diag.DiagnosticBag) CheckError!Type {
-    const left_type = try inferExpr(allocator, module, interner, functions, env, binary.left, diagnostics);
-    const right_type = try inferExpr(allocator, module, interner, functions, env, binary.right, diagnostics);
+fn inferBinaryExpr(allocator: std.mem.Allocator, module: *const hir.Hir, interner: *const base.Interner, functions: *const FunctionEnv, env: *TypeEnv, binary: anytype, expected_return: Type, diagnostics: *diag.DiagnosticBag) CheckError!Type {
+    const left_type = try inferExpr(allocator, module, interner, functions, env, binary.left, expected_return, diagnostics);
+    const right_type = try inferExpr(allocator, module, interner, functions, env, binary.right, expected_return, diagnostics);
 
     switch (binary.op) {
         .add, .sub, .mul, .div, .rem, .add_assign, .sub_assign, .mul_assign, .div_assign, .rem_assign => {
@@ -231,6 +242,7 @@ fn inferCallExpr(
     functions: *const FunctionEnv,
     env: *TypeEnv,
     call: anytype,
+    expected_return: Type,
     diagnostics: *diag.DiagnosticBag,
 ) CheckError!Type {
     switch (module.exprs.items[call.callee]) {
@@ -249,7 +261,7 @@ fn inferCallExpr(
             const arg_end: usize = @intCast(call.args.end());
             const param_start: usize = @intCast(function.params.start);
             for (module.expr_args.items[arg_start..arg_end], module.fn_params.items[param_start .. param_start + call.args.len]) |arg, param| {
-                const actual = try inferExpr(allocator, module, interner, functions, env, arg, diagnostics);
+                const actual = try inferExpr(allocator, module, interner, functions, env, arg, expected_return, diagnostics);
                 const expected = typeFromAnnotation(module, interner, param.type_expr);
                 if (expected != .unknown and actual != .unknown and expected != actual) {
                     try diagnostics.add(.{

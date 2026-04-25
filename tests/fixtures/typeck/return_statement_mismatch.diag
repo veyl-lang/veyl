@@ -1,0 +1,5 @@
+error: return value type does not match function return type
+  --> return_statement_mismatch.veyl:2:5
+   |
+  2 |     return true;
+   |     ^^^^^^^^^^^^
