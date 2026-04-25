@@ -1,0 +1,37 @@
+Root
+  FnDecl package authenticate
+    Param request: Request
+    Return Result<User, AuthError>
+    Block
+      LetStmt
+        Pattern Tuple Some
+          Pattern Binding token
+        Value
+          Call
+            Field header
+              Name request
+            StringLiteral
+        Else
+          Block
+            ReturnStmt
+              Call
+                Name Err
+                Field MissingToken
+                  Name AuthError
+      LetStmt
+        Pattern Record User rest
+          Field id
+          Field name
+            Pattern Binding mut display_name
+        Value
+          Call
+            Name verify
+            Name token
+      FinalExpr
+        Call
+          Name Ok
+          StructLiteral
+            Name User
+            Field id
+            Field name
+              Name display_name

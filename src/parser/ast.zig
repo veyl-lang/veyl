@@ -244,10 +244,9 @@ pub const CatchExpr = struct {
 };
 
 pub const LetStmt = struct {
-    is_mut: bool,
-    name: base.SymbolId,
-    name_span: base.Span,
+    pattern: PatternId,
     value: ExprId,
+    else_block: ?BlockId = null,
     span: base.Span,
 };
 
@@ -634,11 +633,26 @@ fn dumpStmt(
     switch (stmt) {
         .let_stmt => |let_stmt| {
             try writeIndent(writer, indent);
-            try writer.print("LetStmt {s}{s}\n", .{
-                if (let_stmt.is_mut) "mut " else "",
-                interner.get(let_stmt.name) orelse "<missing>",
-            });
-            try dumpExpr(writer, ast, interner, let_stmt.value, indent + 1);
+            const pattern = ast.patterns.items[let_stmt.pattern];
+            if (pattern == .binding and let_stmt.else_block == null) {
+                const binding = pattern.binding;
+                try writer.print("LetStmt {s}{s}\n", .{
+                    if (binding.is_mut) "mut " else "",
+                    interner.get(binding.name) orelse "<missing>",
+                });
+                try dumpExpr(writer, ast, interner, let_stmt.value, indent + 1);
+            } else {
+                try writer.writeAll("LetStmt\n");
+                try dumpPattern(writer, ast, interner, let_stmt.pattern, indent + 1);
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("Value\n");
+                try dumpExpr(writer, ast, interner, let_stmt.value, indent + 2);
+                if (let_stmt.else_block) |else_block| {
+                    try writeIndent(writer, indent + 1);
+                    try writer.writeAll("Else\n");
+                    try dumpBlock(writer, ast, interner, ast.blocks.items[else_block], indent + 2);
+                }
+            }
         },
         .return_stmt => |return_stmt| {
             try writeIndent(writer, indent);

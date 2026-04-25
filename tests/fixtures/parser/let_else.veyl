@@ -1,0 +1,7 @@
+fn authenticate(request: Request) -> Result<User, AuthError> {
+    let Some(token) = request.header("Authorization") else {
+        return Err(AuthError.MissingToken);
+    }
+    let User { id, name: mut display_name, .. } = verify(token);
+    Ok(User { id, name: display_name })
+}

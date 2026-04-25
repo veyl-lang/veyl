@@ -292,25 +292,25 @@ const Parser = struct {
 
     fn parseLetStmt(self: *Parser) Allocator.Error!ast_mod.LetStmt {
         const let_token = (try self.expect(.keyword_let, "expected let statement")) orelse return error.OutOfMemory;
-        var is_mut = false;
-        if (self.match(.keyword_mut) != null) is_mut = true;
-
-        const name_token = (try self.expectIdentifier("expected binding name")) orelse return error.OutOfMemory;
-        _ = (try self.expect(.equal, "expected `=` after binding name")) orelse return error.OutOfMemory;
+        const pattern = try self.parsePattern();
+        _ = (try self.expect(.equal, "expected `=` after let pattern")) orelse return error.OutOfMemory;
 
         const value = try self.parseExpression(@intFromEnum(Precedence.lowest));
         var end_span = self.tree.exprs.items[value].span();
-        if (self.match(.semicolon)) |semicolon| {
+        var else_block: ?ast_mod.BlockId = null;
+        if (self.match(.keyword_else) != null) {
+            else_block = try self.parseBlock();
+            end_span = self.tree.blocks.items[else_block.?].span;
+        } else if (self.match(.semicolon)) |semicolon| {
             end_span = semicolon.span;
         } else {
             try self.addError(self.peek().span, "expected `;` after let statement");
         }
 
         return .{
-            .is_mut = is_mut,
-            .name = try self.internToken(name_token),
-            .name_span = name_token.span,
+            .pattern = pattern,
             .value = value,
+            .else_block = else_block,
             .span = base.Span.join(let_token.span, end_span),
         };
     }
