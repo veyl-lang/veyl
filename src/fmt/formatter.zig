@@ -66,13 +66,25 @@ fn writeFnParams(
         try writeTypeExpr(writer, ast, interner, param.type_expr);
         if (param.default_value) |default_value| {
             try writer.writeAll(" = ");
-            try writeExpr(writer, ast, interner, source, default_value);
+            try writeExpr(writer, ast, interner, source, default_value, 0);
         }
     }
     try writer.writeByte(')');
 }
 
 fn writeBlock(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    source: []const u8,
+    block: ast_mod.Block,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writeBlockBody(writer, ast, interner, source, block, indent);
+    try writer.writeByte('\n');
+}
+
+fn writeBlockBody(
     writer: *std.Io.Writer,
     ast: *const ast_mod.Ast,
     interner: *const base.Interner,
@@ -89,11 +101,11 @@ fn writeBlock(
     }
     if (block.final_expr) |final_expr| {
         try writeIndent(writer, indent + 1);
-        try writeExpr(writer, ast, interner, source, final_expr);
+        try writeExpr(writer, ast, interner, source, final_expr, indent + 1);
         try writer.writeByte('\n');
     }
     try writeIndent(writer, indent);
-    try writer.writeAll("}\n");
+    try writer.writeByte('}');
 }
 
 fn writeStmt(
@@ -109,7 +121,7 @@ fn writeStmt(
             try writer.writeAll("let ");
             try writePattern(writer, ast, interner, source, let_stmt.pattern);
             try writer.writeAll(" = ");
-            try writeExpr(writer, ast, interner, source, let_stmt.value);
+            try writeExpr(writer, ast, interner, source, let_stmt.value, indent);
             if (let_stmt.else_block) |else_block| {
                 try writer.writeAll(" else ");
                 try writeBlock(writer, ast, interner, source, ast.blocks.items[else_block], indent);
@@ -118,21 +130,67 @@ fn writeStmt(
             }
         },
         .expr_stmt => |expr| {
-            try writeExpr(writer, ast, interner, source, expr);
-            try writer.writeAll(";\n");
+            try writeExpr(writer, ast, interner, source, expr, indent);
+            if (exprStmtNeedsSemicolon(ast, expr)) {
+                try writer.writeByte(';');
+            }
+            try writer.writeByte('\n');
         },
         .return_stmt => |return_stmt| {
             try writer.writeAll("return");
             if (return_stmt.value) |value| {
                 try writer.writeByte(' ');
-                try writeExpr(writer, ast, interner, source, value);
+                try writeExpr(writer, ast, interner, source, value, indent);
             }
             try writer.writeAll(";\n");
         },
+        .while_stmt => |while_stmt| {
+            try writer.writeAll("while ");
+            try writeControlCondition(writer, ast, interner, source, while_stmt.condition, indent);
+            try writer.writeByte(' ');
+            try writeBlock(writer, ast, interner, source, ast.blocks.items[while_stmt.body], indent);
+        },
+        .for_stmt => |for_stmt| {
+            try writer.writeAll("for ");
+            try writePattern(writer, ast, interner, source, for_stmt.pattern);
+            try writer.writeAll(" in ");
+            try writeExpr(writer, ast, interner, source, for_stmt.iterable, indent);
+            try writer.writeByte(' ');
+            try writeBlock(writer, ast, interner, source, ast.blocks.items[for_stmt.body], indent);
+        },
+        .defer_stmt => |defer_stmt| {
+            try writer.writeAll("defer");
+            if (defer_stmt.kind == .err) try writer.writeAll(" err");
+            try writer.writeByte(' ');
+            try writeBlock(writer, ast, interner, source, ast.blocks.items[defer_stmt.body], indent);
+        },
         .break_stmt => try writer.writeAll("break;\n"),
         .continue_stmt => try writer.writeAll("continue;\n"),
-        else => {
-            try writer.writeAll("<stmt>;\n");
+    }
+}
+
+fn exprStmtNeedsSemicolon(ast: *const ast_mod.Ast, expr: ast_mod.ExprId) bool {
+    return switch (ast.exprs.items[expr]) {
+        .block_expr, .if_expr, .match_expr => false,
+        else => true,
+    };
+}
+
+fn writeControlCondition(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    source: []const u8,
+    condition: ast_mod.ControlCondition,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    switch (condition) {
+        .expr => |expr| try writeExpr(writer, ast, interner, source, expr, indent),
+        .let_pattern => |let_pattern| {
+            try writer.writeAll("let ");
+            try writePattern(writer, ast, interner, source, let_pattern.pattern);
+            try writer.writeAll(" = ");
+            try writeExpr(writer, ast, interner, source, let_pattern.value, indent);
         },
     }
 }
@@ -196,6 +254,7 @@ fn writeExpr(
     interner: *const base.Interner,
     source: []const u8,
     expr_id: ast_mod.ExprId,
+    indent: usize,
 ) std.Io.Writer.Error!void {
     switch (ast.exprs.items[expr_id]) {
         .name => |name| try writer.writeAll(interner.get(name.symbol) orelse "<missing>"),
@@ -206,12 +265,12 @@ fn writeExpr(
         .bool_literal => |bool_expr| try writer.writeAll(if (bool_expr.value) "true" else "false"),
         .unit_literal => try writer.writeAll("()"),
         .field => |field| {
-            try writeExpr(writer, ast, interner, source, field.base);
+            try writeExpr(writer, ast, interner, source, field.base, indent);
             try writer.writeByte('.');
             try writer.writeAll(interner.get(field.name) orelse "<missing>");
         },
         .call => |call| {
-            try writeExpr(writer, ast, interner, source, call.callee);
+            try writeExpr(writer, ast, interner, source, call.callee, indent);
             if (call.type_args.len != 0) {
                 try writer.writeByte('<');
                 const type_start: usize = @intCast(call.type_args.start);
@@ -231,14 +290,14 @@ fn writeExpr(
                     try writer.writeAll(interner.get(name) orelse "<missing>");
                     try writer.writeAll(": ");
                 }
-                try writeExpr(writer, ast, interner, source, arg.value);
+                try writeExpr(writer, ast, interner, source, arg.value, indent);
             }
             try writer.writeByte(')');
         },
         .index => |index| {
-            try writeExpr(writer, ast, interner, source, index.base);
+            try writeExpr(writer, ast, interner, source, index.base, indent);
             try writer.writeByte('[');
-            try writeExpr(writer, ast, interner, source, index.index);
+            try writeExpr(writer, ast, interner, source, index.index, indent);
             try writer.writeByte(']');
         },
         .array_literal => |array_literal| {
@@ -247,12 +306,12 @@ fn writeExpr(
             const end: usize = @intCast(array_literal.items.end());
             for (ast.expr_args.items[start..end], 0..) |item, index| {
                 if (index != 0) try writer.writeAll(", ");
-                try writeExpr(writer, ast, interner, source, item);
+                try writeExpr(writer, ast, interner, source, item, indent);
             }
             try writer.writeByte(']');
         },
         .struct_literal => |literal| {
-            try writeExpr(writer, ast, interner, source, literal.type_expr);
+            try writeExpr(writer, ast, interner, source, literal.type_expr, indent);
             try writer.writeAll(" { ");
             const start: usize = @intCast(literal.fields.start);
             const end: usize = @intCast(literal.fields.end());
@@ -261,15 +320,44 @@ fn writeExpr(
                 try writer.writeAll(interner.get(field.name) orelse "<missing>");
                 if (field.value) |value| {
                     try writer.writeAll(": ");
-                    try writeExpr(writer, ast, interner, source, value);
+                    try writeExpr(writer, ast, interner, source, value, indent);
                 }
             }
             try writer.writeAll(" }");
         },
         .binary => |binary| {
-            try writeExpr(writer, ast, interner, source, binary.left);
+            try writeExpr(writer, ast, interner, source, binary.left, indent);
             try writer.print(" {s} ", .{binaryOpText(binary.op)});
-            try writeExpr(writer, ast, interner, source, binary.right);
+            try writeExpr(writer, ast, interner, source, binary.right, indent);
+        },
+        .block_expr => |block_expr| try writeBlockBody(writer, ast, interner, source, ast.blocks.items[block_expr.block], indent),
+        .if_expr => |if_expr| {
+            try writer.writeAll("if ");
+            try writeControlCondition(writer, ast, interner, source, if_expr.condition, indent);
+            try writer.writeByte(' ');
+            try writeBlockBody(writer, ast, interner, source, ast.blocks.items[if_expr.then_block], indent);
+            if (if_expr.else_block) |else_block| {
+                try writer.writeAll(" else ");
+                try writeBlockBody(writer, ast, interner, source, ast.blocks.items[else_block], indent);
+            }
+        },
+        .try_expr => |try_expr| {
+            try writer.writeAll("try ");
+            try writeExpr(writer, ast, interner, source, try_expr.value, indent);
+        },
+        .catch_expr => |catch_expr| {
+            try writeExpr(writer, ast, interner, source, catch_expr.value, indent);
+            try writer.writeAll(" catch");
+            if (catch_expr.binding) |binding| {
+                try writer.writeAll(" |");
+                try writer.writeAll(interner.get(binding.name) orelse "<missing>");
+                try writer.writeByte('|');
+            }
+            try writer.writeByte(' ');
+            switch (catch_expr.handler) {
+                .expr => |handler_expr| try writeExpr(writer, ast, interner, source, handler_expr, indent),
+                .block => |block| try writeBlockBody(writer, ast, interner, source, ast.blocks.items[block], indent),
+            }
         },
         else => try writer.writeAll("<expr>"),
     }

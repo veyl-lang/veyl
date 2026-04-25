@@ -1,0 +1,10 @@
+fn control(items: Array<Item>, maybe: Option<Item>) -> Result<Int, Error> {
+defer{cleanup();}
+defer err{rollback();}
+if let Some(item)=maybe{use_item(item);}else{return Err(Error.Missing);}
+while let Some(item)=next_item(){continue;}
+for item in items{print(item);}
+let value=parse_int("10") catch |err| {return Err(err);};
+try finish();
+if value>0{value}else{0}
+}
