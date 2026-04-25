@@ -1,0 +1,83 @@
+Root
+  FnDecl package describe
+    Param result: Result<Int, Error>
+    Param code: Int
+    Param parts: Array<Str>
+    Param event: Event
+    Return Str
+    Block
+      LetStmt status
+        MatchExpr
+          Value
+            Name code
+          Arm
+            Pattern Range inclusive
+              Pattern IntLiteral
+              Pattern IntLiteral
+            Body
+              StringLiteral
+          Arm
+            Pattern Or
+              Pattern IntLiteral
+              Pattern IntLiteral
+            Body
+              StringLiteral
+          Arm
+            Pattern Wildcard
+            Body
+              StringLiteral
+      LetStmt route
+        MatchExpr
+          Value
+            Name parts
+          Arm
+            Pattern Array
+              Pattern StringLiteral
+              Pattern StringLiteral
+              Pattern Binding id
+            Body
+              Name id
+          Arm
+            Pattern Array
+              Pattern StringLiteral
+              Pattern StringLiteral
+              Pattern Rest rest
+            Body
+              Name rest
+          Arm
+            Pattern Wildcard
+            Body
+              StringLiteral
+      FinalExpr
+        MatchExpr
+          Value
+            Name event
+          Arm
+            Pattern Record Event.Click
+              Field x
+              Field y
+            Guard
+              Binary greater
+                Name x
+                IntLiteral
+            Body
+              Call
+                Name handle_click
+                Name x
+                Name y
+          Arm
+            Pattern Tuple Ok
+              Pattern Binding value
+            Body
+              Name value
+          Arm
+            Pattern Tuple Err
+              Pattern Binding err
+            Body
+              Block
+                ReturnStmt
+                  Name err
+          Arm
+            Pattern Wildcard
+            Body
+              Name status

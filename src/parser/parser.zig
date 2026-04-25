@@ -539,6 +539,7 @@ const Parser = struct {
             .keyword_true => return self.tree.addExpr(.{ .bool_literal = .{ .value = true, .span = token.span } }),
             .keyword_false => return self.tree.addExpr(.{ .bool_literal = .{ .value = false, .span = token.span } }),
             .keyword_if => return self.parseIfExpr(token.span),
+            .keyword_match => return self.parseMatchExpr(token.span),
             .keyword_try => return self.parseTryExpr(token.span),
             .l_bracket => return self.parseArrayLiteral(token.span),
             .l_paren => {
@@ -608,6 +609,294 @@ const Parser = struct {
             .condition = condition,
             .then_block = then_block,
             .else_block = else_block,
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parseMatchExpr(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {
+        const old_allow_struct_literal = self.allow_struct_literal;
+        self.allow_struct_literal = false;
+        const value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+        self.allow_struct_literal = old_allow_struct_literal;
+        _ = (try self.expect(.l_brace, "expected `{` after match value")) orelse return value;
+
+        const arms_start = self.tree.reserveMatchArms();
+        var arms_len: u32 = 0;
+        var end_span = self.tree.exprs.items[value].span();
+
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            self.skipTrivia();
+            if (self.peekKind() == .r_brace or self.peekKind() == .eof) break;
+
+            const arm = try self.parseMatchArm();
+            try self.tree.addMatchArm(arm);
+            arms_len += 1;
+            end_span = arm.span;
+            if (self.match(.comma)) |comma| {
+                end_span = comma.span;
+            }
+        }
+
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after match arms");
+        }
+
+        return self.tree.addExpr(.{ .match_expr = .{
+            .value = value,
+            .arms = .{ .start = arms_start, .len = arms_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parseMatchArm(self: *Parser) Allocator.Error!ast_mod.MatchArm {
+        const pattern = try self.parsePattern();
+        var guard: ?ast_mod.ExprId = null;
+        if (self.match(.keyword_if) != null) {
+            guard = try self.parseExpression(@intFromEnum(Precedence.lowest));
+        }
+        _ = (try self.expect(.fat_arrow, "expected `=>` after match pattern")) orelse {
+            const span = self.tree.patterns.items[pattern].span();
+            const error_expr = try self.tree.addExpr(.{ .name = .{
+                .symbol = try self.interner.intern("<error>"),
+                .span = span,
+            } });
+            return .{
+                .pattern = pattern,
+                .guard = guard,
+                .body = .{ .expr = error_expr },
+                .span = span,
+            };
+        };
+
+        const body: ast_mod.MatchArmBody = if (self.peekKind() == .l_brace) body: {
+            break :body .{ .block = try self.parseBlock() };
+        } else body: {
+            break :body .{ .expr = try self.parseExpression(@intFromEnum(Precedence.lowest)) };
+        };
+
+        return .{
+            .pattern = pattern,
+            .guard = guard,
+            .body = body,
+            .span = base.Span.join(self.tree.patterns.items[pattern].span(), body.span(&self.tree)),
+        };
+    }
+
+    fn parsePattern(self: *Parser) Allocator.Error!ast_mod.PatternId {
+        const first = try self.parseRangePattern();
+        if (self.peekKind() != .pipe) return first;
+
+        const patterns_start = self.tree.reservePatternArgs();
+        try self.tree.addPatternArg(first);
+        var patterns_len: u32 = 1;
+        var end_span = self.tree.patterns.items[first].span();
+
+        while (self.match(.pipe) != null) {
+            const item = try self.parseRangePattern();
+            try self.tree.addPatternArg(item);
+            patterns_len += 1;
+            end_span = self.tree.patterns.items[item].span();
+        }
+
+        return self.tree.addPattern(.{ .or_pattern = .{
+            .patterns = .{ .start = patterns_start, .len = patterns_len },
+            .span = base.Span.join(self.tree.patterns.items[first].span(), end_span),
+        } });
+    }
+
+    fn parseRangePattern(self: *Parser) Allocator.Error!ast_mod.PatternId {
+        const start = try self.parsePrimaryPattern();
+        if (self.match(.dot_dot_equal)) |_| {
+            const end = try self.parsePrimaryPattern();
+            return self.tree.addPattern(.{ .range = .{
+                .start = start,
+                .end = end,
+                .inclusive = true,
+                .span = base.Span.join(self.tree.patterns.items[start].span(), self.tree.patterns.items[end].span()),
+            } });
+        }
+        if (self.match(.dot_dot)) |_| {
+            const end = try self.parsePrimaryPattern();
+            return self.tree.addPattern(.{ .range = .{
+                .start = start,
+                .end = end,
+                .inclusive = false,
+                .span = base.Span.join(self.tree.patterns.items[start].span(), self.tree.patterns.items[end].span()),
+            } });
+        }
+        return start;
+    }
+
+    fn parsePrimaryPattern(self: *Parser) Allocator.Error!ast_mod.PatternId {
+        const token = self.advance();
+        switch (token.kind) {
+            .underscore => return self.tree.addPattern(.{ .wildcard = token.span }),
+            .keyword_mut => {
+                const name_token = (try self.expectIdentifier("expected binding name after `mut`")) orelse return self.tree.addPattern(.{ .wildcard = token.span });
+                return self.tree.addPattern(.{ .binding = .{
+                    .name = try self.internToken(name_token),
+                    .name_span = name_token.span,
+                    .is_mut = true,
+                    .span = base.Span.join(token.span, name_token.span),
+                } });
+            },
+            .int_literal => return self.tree.addPattern(.{ .int_literal = token.span }),
+            .float_literal => return self.tree.addPattern(.{ .float_literal = token.span }),
+            .string_literal => return self.tree.addPattern(.{ .string_literal = token.span }),
+            .char_literal => return self.tree.addPattern(.{ .char_literal = token.span }),
+            .keyword_true => return self.tree.addPattern(.{ .bool_literal = .{ .value = true, .span = token.span } }),
+            .keyword_false => return self.tree.addPattern(.{ .bool_literal = .{ .value = false, .span = token.span } }),
+            .dot_dot => return self.parseRestPattern(token.span),
+            .l_bracket => return self.parseArrayPattern(token.span),
+            .identifier, .keyword_Self => return self.parsePathPattern(token),
+            else => {
+                try self.addError(token.span, "expected pattern");
+                return self.tree.addPattern(.{ .wildcard = token.span });
+            },
+        }
+    }
+
+    fn parseRestPattern(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.PatternId {
+        var name: ?base.SymbolId = null;
+        var name_span: ?base.Span = null;
+        var end_span = start_span;
+        if (self.peekKind() == .identifier) {
+            const name_token = self.advance();
+            name = try self.internToken(name_token);
+            name_span = name_token.span;
+            end_span = name_token.span;
+        }
+        return self.tree.addPattern(.{ .rest = .{
+            .name = name,
+            .name_span = name_span,
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parseArrayPattern(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.PatternId {
+        const items_start = self.tree.reservePatternArgs();
+        var items_len: u32 = 0;
+        var end_span = start_span;
+        while (self.peekKind() != .r_bracket and self.peekKind() != .eof) {
+            const item = try self.parsePattern();
+            try self.tree.addPatternArg(item);
+            items_len += 1;
+            end_span = self.tree.patterns.items[item].span();
+            if (self.match(.comma) == null) break;
+        }
+        if (self.match(.r_bracket)) |bracket| {
+            end_span = bracket.span;
+        } else {
+            try self.addError(self.peek().span, "expected `]` after array pattern");
+        }
+        return self.tree.addPattern(.{ .array = .{
+            .items = .{ .start = items_start, .len = items_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parsePathPattern(self: *Parser, first_token: lexer.Token) Allocator.Error!ast_mod.PatternId {
+        const path_start = self.tree.reservePath();
+        var path_len: u32 = 0;
+        try self.tree.addPathSegment(.{
+            .name = try self.internToken(first_token),
+            .span = first_token.span,
+        });
+        path_len += 1;
+        var end_span = first_token.span;
+
+        while (self.match(.dot) != null) {
+            const segment_token = (try self.expectPatternPathSegment("expected pattern path segment after `.`")) orelse break;
+            try self.tree.addPathSegment(.{
+                .name = try self.internToken(segment_token),
+                .span = segment_token.span,
+            });
+            path_len += 1;
+            end_span = segment_token.span;
+        }
+
+        const path = base.Range{ .start = path_start, .len = path_len };
+        if (self.match(.l_paren)) |_| return self.finishTuplePattern(path, first_token.span);
+        if (self.match(.l_brace)) |_| return self.finishRecordPattern(path, first_token.span);
+
+        if (path_len == 1 and isBindingPatternName(self.tokenText(first_token))) {
+            return self.tree.addPattern(.{ .binding = .{
+                .name = try self.internToken(first_token),
+                .name_span = first_token.span,
+                .span = first_token.span,
+            } });
+        }
+
+        return self.tree.addPattern(.{ .path = .{
+            .segments = path,
+            .span = base.Span.join(first_token.span, end_span),
+        } });
+    }
+
+    fn finishTuplePattern(self: *Parser, path: base.Range, start_span: base.Span) Allocator.Error!ast_mod.PatternId {
+        const args_start = self.tree.reservePatternArgs();
+        var args_len: u32 = 0;
+        var end_span = start_span;
+        while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
+            const arg = try self.parsePattern();
+            try self.tree.addPatternArg(arg);
+            args_len += 1;
+            end_span = self.tree.patterns.items[arg].span();
+            if (self.match(.comma) == null) break;
+        }
+        if (self.match(.r_paren)) |paren| {
+            end_span = paren.span;
+        } else {
+            try self.addError(self.peek().span, "expected `)` after tuple pattern");
+        }
+        return self.tree.addPattern(.{ .tuple = .{
+            .path = path,
+            .args = .{ .start = args_start, .len = args_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn finishRecordPattern(self: *Parser, path: base.Range, start_span: base.Span) Allocator.Error!ast_mod.PatternId {
+        const fields_start = self.tree.reservePatternRecordFields();
+        var fields_len: u32 = 0;
+        var has_rest = false;
+        var end_span = start_span;
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            if (self.match(.dot_dot)) |dot_dot| {
+                has_rest = true;
+                end_span = dot_dot.span;
+                break;
+            }
+
+            const field_token = (try self.expectIdentifier("expected record pattern field")) orelse break;
+            var field_pattern: ?ast_mod.PatternId = null;
+            var field_end = field_token.span;
+            if (self.match(.colon) != null) {
+                field_pattern = try self.parsePattern();
+                field_end = self.tree.patterns.items[field_pattern.?].span();
+            }
+            try self.tree.addPatternRecordField(.{
+                .name = try self.internToken(field_token),
+                .name_span = field_token.span,
+                .pattern = field_pattern,
+                .span = base.Span.join(field_token.span, field_end),
+            });
+            fields_len += 1;
+            end_span = field_end;
+
+            if (self.match(.comma) == null) break;
+        }
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after record pattern");
+        }
+        return self.tree.addPattern(.{ .record = .{
+            .path = path,
+            .fields = .{ .start = fields_start, .len = fields_len },
+            .has_rest = has_rest,
             .span = base.Span.join(start_span, end_span),
         } });
     }
@@ -939,6 +1228,16 @@ const Parser = struct {
         };
     }
 
+    fn expectPatternPathSegment(self: *Parser, message: []const u8) Allocator.Error!?lexer.Token {
+        return switch (self.peekKind()) {
+            .identifier, .keyword_Self => self.advance(),
+            else => {
+                try self.addError(self.peek().span, message);
+                return null;
+            },
+        };
+    }
+
     fn expect(self: *Parser, kind: lexer.TokenKind, message: []const u8) Allocator.Error!?lexer.Token {
         if (self.match(kind)) |token| return token;
         try self.addError(self.peek().span, message);
@@ -1007,6 +1306,11 @@ const Parser = struct {
         return self.tokens[self.index];
     }
 };
+
+fn isBindingPatternName(text: []const u8) bool {
+    if (text.len == 0) return false;
+    return text[0] == '_' or (text[0] >= 'a' and text[0] <= 'z');
+}
 
 test "parser builds import AST" {
     const source =

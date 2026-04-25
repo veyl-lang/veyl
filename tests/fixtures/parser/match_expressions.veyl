@@ -1,0 +1,20 @@
+fn describe(result: Result<Int, Error>, code: Int, parts: Array<Str>, event: Event) -> Str {
+    let status = match code {
+        200..=299 => "success",
+        404 | 405 => "missing",
+        _ => "other",
+    };
+    let route = match parts {
+        ["", "users", id] => id,
+        ["", "assets", ..rest] => rest,
+        _ => "unknown",
+    };
+    match event {
+        Event.Click { x, y } if x > 0 => handle_click(x, y),
+        Ok(value) => value,
+        Err(err) => {
+            return err;
+        },
+        _ => status,
+    }
+}

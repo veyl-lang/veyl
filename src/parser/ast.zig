@@ -9,6 +9,7 @@ pub const BlockId = u32;
 pub const ExprId = base.ExprId;
 pub const StmtId = base.StmtId;
 pub const TypeId = base.TypeId;
+pub const PatternId = u32;
 
 pub const Visibility = enum {
     package,
@@ -112,6 +113,7 @@ pub const Expr = union(enum) {
     array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
     if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
+    match_expr: MatchExpr,
     try_expr: TryExpr,
     catch_expr: CatchExpr,
 
@@ -130,10 +132,79 @@ pub const Expr = union(enum) {
             .array_literal => |expr| expr.span,
             .struct_literal => |expr| expr.span,
             .if_expr => |expr| expr.span,
+            .match_expr => |expr| expr.span,
             .try_expr => |expr| expr.span,
             .catch_expr => |expr| expr.span,
         };
     }
+};
+
+pub const Pattern = union(enum) {
+    wildcard: base.Span,
+    binding: struct { name: base.SymbolId, name_span: base.Span, is_mut: bool = false, span: base.Span },
+    int_literal: base.Span,
+    float_literal: base.Span,
+    string_literal: base.Span,
+    char_literal: base.Span,
+    bool_literal: struct { value: bool, span: base.Span },
+    path: struct { segments: base.Range, span: base.Span },
+    tuple: struct { path: base.Range, args: base.Range, span: base.Span },
+    record: struct { path: base.Range, fields: base.Range, has_rest: bool = false, span: base.Span },
+    array: struct { items: base.Range, span: base.Span },
+    rest: struct { name: ?base.SymbolId = null, name_span: ?base.Span = null, span: base.Span },
+    range: struct { start: PatternId, end: PatternId, inclusive: bool, span: base.Span },
+    or_pattern: struct { patterns: base.Range, span: base.Span },
+
+    pub fn span(self: Pattern) base.Span {
+        return switch (self) {
+            .wildcard => |span_value| span_value,
+            .binding => |pattern| pattern.span,
+            .int_literal => |span_value| span_value,
+            .float_literal => |span_value| span_value,
+            .string_literal => |span_value| span_value,
+            .char_literal => |span_value| span_value,
+            .bool_literal => |pattern| pattern.span,
+            .path => |pattern| pattern.span,
+            .tuple => |pattern| pattern.span,
+            .record => |pattern| pattern.span,
+            .array => |pattern| pattern.span,
+            .rest => |pattern| pattern.span,
+            .range => |pattern| pattern.span,
+            .or_pattern => |pattern| pattern.span,
+        };
+    }
+};
+
+pub const PatternRecordField = struct {
+    name: base.SymbolId,
+    name_span: base.Span,
+    pattern: ?PatternId = null,
+    span: base.Span,
+};
+
+pub const MatchArmBody = union(enum) {
+    expr: ExprId,
+    block: BlockId,
+
+    pub fn span(self: MatchArmBody, ast: *const Ast) base.Span {
+        return switch (self) {
+            .expr => |expr_id| ast.exprs.items[expr_id].span(),
+            .block => |block_id| ast.blocks.items[block_id].span,
+        };
+    }
+};
+
+pub const MatchArm = struct {
+    pattern: PatternId,
+    guard: ?ExprId = null,
+    body: MatchArmBody,
+    span: base.Span,
+};
+
+pub const MatchExpr = struct {
+    value: ExprId,
+    arms: base.Range,
+    span: base.Span,
 };
 
 pub const StructLiteralField = struct {
@@ -293,6 +364,10 @@ pub const Ast = struct {
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
     struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
+    patterns: std.ArrayListUnmanaged(Pattern) = .empty,
+    pattern_args: std.ArrayListUnmanaged(PatternId) = .empty,
+    pattern_record_fields: std.ArrayListUnmanaged(PatternRecordField) = .empty,
+    match_arms: std.ArrayListUnmanaged(MatchArm) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
     block_stmt_ids: std.ArrayListUnmanaged(StmtId) = .empty,
@@ -317,6 +392,10 @@ pub const Ast = struct {
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
         self.struct_literal_fields.deinit(self.allocator);
+        self.patterns.deinit(self.allocator);
+        self.pattern_args.deinit(self.allocator);
+        self.pattern_record_fields.deinit(self.allocator);
+        self.match_arms.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
         self.block_stmt_ids.deinit(self.allocator);
@@ -394,6 +473,36 @@ pub const Ast = struct {
 
     pub fn addStructLiteralField(self: *Ast, field: StructLiteralField) Allocator.Error!void {
         try self.struct_literal_fields.append(self.allocator, field);
+    }
+
+    pub fn addPattern(self: *Ast, pattern: Pattern) Allocator.Error!PatternId {
+        const id: PatternId = @intCast(self.patterns.items.len);
+        try self.patterns.append(self.allocator, pattern);
+        return id;
+    }
+
+    pub fn reservePatternArgs(self: *const Ast) u32 {
+        return @intCast(self.pattern_args.items.len);
+    }
+
+    pub fn addPatternArg(self: *Ast, pattern: PatternId) Allocator.Error!void {
+        try self.pattern_args.append(self.allocator, pattern);
+    }
+
+    pub fn reservePatternRecordFields(self: *const Ast) u32 {
+        return @intCast(self.pattern_record_fields.items.len);
+    }
+
+    pub fn addPatternRecordField(self: *Ast, field: PatternRecordField) Allocator.Error!void {
+        try self.pattern_record_fields.append(self.allocator, field);
+    }
+
+    pub fn reserveMatchArms(self: *const Ast) u32 {
+        return @intCast(self.match_arms.items.len);
+    }
+
+    pub fn addMatchArm(self: *Ast, arm: MatchArm) Allocator.Error!void {
+        try self.match_arms.append(self.allocator, arm);
     }
 
     pub fn reserveBlockStmtIds(self: *const Ast) u32 {
@@ -641,6 +750,30 @@ fn dumpExpr(
                 try dumpBlock(writer, ast, interner, ast.blocks.items[else_block], indent + 2);
             }
         },
+        .match_expr => |match_expr| {
+            try writer.writeAll("MatchExpr\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Value\n");
+            try dumpExpr(writer, ast, interner, match_expr.value, indent + 2);
+            const start: usize = @intCast(match_expr.arms.start);
+            const end: usize = @intCast(match_expr.arms.end());
+            for (ast.match_arms.items[start..end]) |arm| {
+                try writeIndent(writer, indent + 1);
+                try writer.writeAll("Arm\n");
+                try dumpPattern(writer, ast, interner, arm.pattern, indent + 2);
+                if (arm.guard) |guard| {
+                    try writeIndent(writer, indent + 2);
+                    try writer.writeAll("Guard\n");
+                    try dumpExpr(writer, ast, interner, guard, indent + 3);
+                }
+                try writeIndent(writer, indent + 2);
+                try writer.writeAll("Body\n");
+                switch (arm.body) {
+                    .expr => |arm_expr| try dumpExpr(writer, ast, interner, arm_expr, indent + 3),
+                    .block => |block_id| try dumpBlock(writer, ast, interner, ast.blocks.items[block_id], indent + 3),
+                }
+            }
+        },
         .try_expr => |try_expr| {
             try writer.writeAll("TryExpr\n");
             try dumpExpr(writer, ast, interner, try_expr.value, indent + 1);
@@ -668,6 +801,87 @@ fn writeIndent(writer: *std.Io.Writer, indent: usize) std.Io.Writer.Error!void {
     var i: usize = 0;
     while (i < indent) : (i += 1) {
         try writer.writeAll("  ");
+    }
+}
+
+fn dumpPattern(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    pattern_id: PatternId,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    const pattern = ast.patterns.items[pattern_id];
+    try writeIndent(writer, indent);
+    switch (pattern) {
+        .wildcard => try writer.writeAll("Pattern Wildcard\n"),
+        .binding => |binding| try writer.print("Pattern Binding {s}{s}\n", .{
+            if (binding.is_mut) "mut " else "",
+            interner.get(binding.name) orelse "<missing>",
+        }),
+        .int_literal => try writer.writeAll("Pattern IntLiteral\n"),
+        .float_literal => try writer.writeAll("Pattern FloatLiteral\n"),
+        .string_literal => try writer.writeAll("Pattern StringLiteral\n"),
+        .char_literal => try writer.writeAll("Pattern CharLiteral\n"),
+        .bool_literal => |bool_pattern| try writer.print("Pattern BoolLiteral {}\n", .{bool_pattern.value}),
+        .path => |path_pattern| {
+            try writer.writeAll("Pattern Path ");
+            try dumpPath(writer, ast, interner, path_pattern.segments);
+            try writer.writeByte('\n');
+        },
+        .tuple => |tuple| {
+            try writer.writeAll("Pattern Tuple ");
+            try dumpPath(writer, ast, interner, tuple.path);
+            try writer.writeByte('\n');
+            const start: usize = @intCast(tuple.args.start);
+            const end: usize = @intCast(tuple.args.end());
+            for (ast.pattern_args.items[start..end]) |arg| {
+                try dumpPattern(writer, ast, interner, arg, indent + 1);
+            }
+        },
+        .record => |record| {
+            try writer.writeAll("Pattern Record ");
+            try dumpPath(writer, ast, interner, record.path);
+            if (record.has_rest) try writer.writeAll(" rest");
+            try writer.writeByte('\n');
+            const start: usize = @intCast(record.fields.start);
+            const end: usize = @intCast(record.fields.end());
+            for (ast.pattern_record_fields.items[start..end]) |field| {
+                try writeIndent(writer, indent + 1);
+                try writer.print("Field {s}\n", .{interner.get(field.name) orelse "<missing>"});
+                if (field.pattern) |field_pattern| {
+                    try dumpPattern(writer, ast, interner, field_pattern, indent + 2);
+                }
+            }
+        },
+        .array => |array| {
+            try writer.writeAll("Pattern Array\n");
+            const start: usize = @intCast(array.items.start);
+            const end: usize = @intCast(array.items.end());
+            for (ast.pattern_args.items[start..end]) |item| {
+                try dumpPattern(writer, ast, interner, item, indent + 1);
+            }
+        },
+        .rest => |rest| {
+            if (rest.name) |name| {
+                try writer.print("Pattern Rest {s}\n", .{interner.get(name) orelse "<missing>"});
+            } else {
+                try writer.writeAll("Pattern Rest\n");
+            }
+        },
+        .range => |range| {
+            try writer.print("Pattern Range {s}\n", .{if (range.inclusive) "inclusive" else "exclusive"});
+            try dumpPattern(writer, ast, interner, range.start, indent + 1);
+            try dumpPattern(writer, ast, interner, range.end, indent + 1);
+        },
+        .or_pattern => |or_pattern| {
+            try writer.writeAll("Pattern Or\n");
+            const start: usize = @intCast(or_pattern.patterns.start);
+            const end: usize = @intCast(or_pattern.patterns.end());
+            for (ast.pattern_args.items[start..end]) |item| {
+                try dumpPattern(writer, ast, interner, item, indent + 1);
+            }
+        },
     }
 }
 
