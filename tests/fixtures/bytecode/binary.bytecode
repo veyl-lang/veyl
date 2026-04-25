@@ -1,8 +1,8 @@
 BytecodeModule
   Function math params=0
-    0: constant_int
-    1: constant_int
+    0: constant_int 1
+    1: constant_int 2
     2: add
-    3: constant_int
+    3: constant_int 3
     4: equal
     5: ret

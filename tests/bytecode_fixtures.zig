@@ -22,7 +22,7 @@ test "bytecode golden: simple function" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
     defer bytecode.deinit();
 
     const actual = try veyl.bytecode.dumpBytecode(std.testing.allocator, &bytecode, &interner);
@@ -51,7 +51,7 @@ test "bytecode golden: binary expressions" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
     defer bytecode.deinit();
 
     const actual = try veyl.bytecode.dumpBytecode(std.testing.allocator, &bytecode, &interner);
