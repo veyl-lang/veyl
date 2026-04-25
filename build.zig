@@ -1,0 +1,62 @@
+const std = @import("std");
+
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+
+    const veyl_mod = b.createModule(.{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    const exe = b.addExecutable(.{
+        .name = "veyl",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    exe.root_module.addImport("veyl", veyl_mod);
+    b.installArtifact(exe);
+
+    const run_cmd = b.addRunArtifact(exe);
+    run_cmd.step.dependOn(b.getInstallStep());
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
+    const run_step = b.step("run", "Run the Veyl CLI");
+    run_step.dependOn(&run_cmd.step);
+
+    const tests = b.addTest(.{
+        .root_module = veyl_mod,
+    });
+    const run_tests = b.addRunArtifact(tests);
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_tests.step);
+
+    const fmt_step = b.step("fmt", "Format Zig source");
+    fmt_step.dependOn(&b.addFmt(.{
+        .paths = &.{
+            "build.zig",
+            "src",
+        },
+    }).step);
+
+    const fmt_check_step = b.step("fmt-check", "Check Zig source formatting");
+    fmt_check_step.dependOn(&b.addFmt(.{
+        .paths = &.{
+            "build.zig",
+            "src",
+        },
+        .check = true,
+    }).step);
+
+    const check_step = b.step("check", "Build all artifacts without running tests");
+    check_step.dependOn(&exe.step);
+    check_step.dependOn(&tests.step);
+    check_step.dependOn(fmt_check_step);
+}

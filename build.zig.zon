@@ -1,0 +1,12 @@
+.{
+    .name = .veyl,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "README.md",
+    },
+    .fingerprint = 0x9bf5c65b8774fe03,
+}
