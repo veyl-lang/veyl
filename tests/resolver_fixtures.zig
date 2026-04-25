@@ -64,3 +64,33 @@ test "resolver diagnostic: duplicate top-level symbols" {
     defer std.testing.allocator.free(rendered);
     try std.testing.expectEqualStrings(expected, rendered);
 }
+
+test "resolver golden: import bindings" {
+    const source = @embedFile("fixtures/resolve/import_bindings.veyl");
+    const expected = @embedFile("fixtures/resolve/import_bindings.resolve");
+
+    var diagnostics = veyl.diag.DiagnosticBag.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var tokens = try veyl.lexer.lex(std.testing.allocator, 0, source, &diagnostics);
+    defer tokens.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var interner = veyl.base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = try veyl.parser.parse(std.testing.allocator, 0, source, tokens.tokens.items, &interner, &diagnostics);
+    defer tree.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
+    defer hir.deinit();
+
+    var resolved = try veyl.resolve.resolveModule(std.testing.allocator, &hir, &diagnostics);
+    defer resolved.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    const actual = try veyl.resolve.dumpResolvedModule(std.testing.allocator, &resolved, &interner);
+    defer std.testing.allocator.free(actual);
+    try std.testing.expectEqualStrings(expected, actual);
+}

@@ -1,0 +1,5 @@
+import std.fs
+import std.json as json
+import config.{Config, load_config as load}
+
+fn main() {}

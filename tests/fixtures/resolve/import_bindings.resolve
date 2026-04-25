@@ -1,0 +1,6 @@
+ResolvedModule
+  Symbol import fs
+  Symbol import json
+  Symbol import Config
+  Symbol import load
+  Symbol function main

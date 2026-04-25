@@ -7,6 +7,7 @@ const Allocator = std.mem.Allocator;
 const DumpError = Allocator.Error || std.Io.Writer.Error;
 
 pub const SymbolKind = enum {
+    import,
     function,
     type_alias,
     struct_type,
@@ -46,23 +47,68 @@ pub fn resolveModule(
     defer seen.deinit(allocator);
 
     for (module.decls.items) |decl| {
-        if (topLevelSymbol(decl)) |symbol| {
-            if (seen.get(symbol.name)) |first_span| {
-                try diagnostics.add(.{
-                    .severity = .err,
-                    .span = symbol.span,
-                    .message = "duplicate top-level declaration",
-                    .labels = &.{.{ .span = first_span, .message = "first declaration is here" }},
-                });
-                continue;
-            }
-
-            try seen.put(allocator, symbol.name, symbol.span);
-            try resolved.symbols.append(allocator, symbol);
+        switch (decl) {
+            .import => |import_decl| try addImportSymbols(allocator, module, import_decl, &seen, &resolved, diagnostics),
+            else => if (topLevelSymbol(decl)) |symbol| {
+                try addSymbol(allocator, symbol, &seen, &resolved, diagnostics);
+            },
         }
     }
 
     return resolved;
+}
+
+fn addImportSymbols(
+    allocator: Allocator,
+    module: *const hir.Hir,
+    import_decl: hir.ir.ImportDecl,
+    seen: *std.AutoHashMapUnmanaged(base.SymbolId, base.Span),
+    resolved: *ResolvedModule,
+    diagnostics: *diag.DiagnosticBag,
+) Allocator.Error!void {
+    if (import_decl.items.len == 0) {
+        const binding = import_decl.alias orelse finalPathSegment(module, import_decl.path).?.name;
+        const span = if (import_decl.alias != null) import_decl.span else finalPathSegment(module, import_decl.path).?.span;
+        try addSymbol(allocator, .{ .name = binding, .kind = .import, .span = span }, seen, resolved, diagnostics);
+        return;
+    }
+
+    const start: usize = @intCast(import_decl.items.start);
+    const end: usize = @intCast(import_decl.items.end());
+    for (module.import_items.items[start..end]) |item| {
+        try addSymbol(allocator, .{
+            .name = item.alias orelse item.name,
+            .kind = .import,
+            .span = item.span,
+        }, seen, resolved, diagnostics);
+    }
+}
+
+fn finalPathSegment(module: *const hir.Hir, path: base.Range) ?hir.ir.PathSegment {
+    if (path.len == 0) return null;
+    const index: usize = @intCast(path.start + path.len - 1);
+    return module.path_segments.items[index];
+}
+
+fn addSymbol(
+    allocator: Allocator,
+    symbol: Symbol,
+    seen: *std.AutoHashMapUnmanaged(base.SymbolId, base.Span),
+    resolved: *ResolvedModule,
+    diagnostics: *diag.DiagnosticBag,
+) Allocator.Error!void {
+    if (seen.get(symbol.name)) |first_span| {
+        try diagnostics.add(.{
+            .severity = .err,
+            .span = symbol.span,
+            .message = "duplicate top-level declaration",
+            .labels = &.{.{ .span = first_span, .message = "first declaration is here" }},
+        });
+        return;
+    }
+
+    try seen.put(allocator, symbol.name, symbol.span);
+    try resolved.symbols.append(allocator, symbol);
 }
 
 fn topLevelSymbol(decl: hir.Decl) ?Symbol {

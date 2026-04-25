@@ -18,6 +18,13 @@ pub const PathSegment = struct {
 pub const ImportDecl = struct {
     visibility: parser.Visibility,
     path: base.Range,
+    items: base.Range,
+    alias: ?base.SymbolId,
+    span: base.Span,
+};
+
+pub const ImportItem = struct {
+    name: base.SymbolId,
     alias: ?base.SymbolId,
     span: base.Span,
 };
@@ -158,6 +165,7 @@ pub const Hir = struct {
     source: base.SourceId,
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
+    import_items: std.ArrayListUnmanaged(ImportItem) = .empty,
     impl_methods: std.ArrayListUnmanaged(FunctionDecl) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
@@ -177,6 +185,7 @@ pub const Hir = struct {
     pub fn deinit(self: *Hir) void {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
+        self.import_items.deinit(self.allocator);
         self.impl_methods.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
@@ -206,6 +215,7 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
             .import => |import_decl| .{ .import = .{
                 .visibility = import_decl.visibility,
                 .path = import_decl.path,
+                .items = try lowerImportItems(&hir, ast, import_decl.items),
                 .alias = import_decl.alias,
                 .span = import_decl.span,
             } },
@@ -244,6 +254,20 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
     }
 
     return hir;
+}
+
+fn lowerImportItems(hir: *Hir, ast: *const parser.Ast, items: base.Range) Allocator.Error!base.Range {
+    const items_start: u32 = @intCast(hir.import_items.items.len);
+    const start: usize = @intCast(items.start);
+    const end: usize = @intCast(items.end());
+    for (ast.import_items.items[start..end]) |item| {
+        try hir.import_items.append(hir.allocator, .{
+            .name = item.name,
+            .alias = item.alias,
+            .span = item.span,
+        });
+    }
+    return .{ .start = items_start, .len = @intCast(hir.import_items.items.len - items_start) };
 }
 
 fn lowerFunctionDecl(hir: *Hir, ast: *const parser.Ast, fn_decl: parser.FnDecl) Allocator.Error!FunctionDecl {
