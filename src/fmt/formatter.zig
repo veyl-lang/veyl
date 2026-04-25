@@ -48,7 +48,13 @@ fn formatFn(
         try writer.writeAll(" -> ");
         try writeTypeExpr(writer, ast, interner, return_type);
     }
-    try writer.writeByte(' ');
+    if (fn_decl.where_predicates.len != 0) {
+        try writer.writeByte('\n');
+        try writeWhereClause(writer, ast, interner, fn_decl.where_predicates, indent);
+        try writeIndent(writer, indent);
+    } else {
+        try writer.writeByte(' ');
+    }
     try writeBlock(writer, ast, interner, source, ast.blocks.items[fn_decl.body], indent);
 }
 
@@ -68,7 +74,13 @@ fn formatImpl(
         try writer.writeAll(" for ");
     }
     try writeTypeExpr(writer, ast, interner, impl_decl.self_type);
-    try writer.writeAll(" {\n");
+    if (impl_decl.where_predicates.len != 0) {
+        try writer.writeByte('\n');
+        try writeWhereClause(writer, ast, interner, impl_decl.where_predicates, 0);
+    } else {
+        try writer.writeByte(' ');
+    }
+    try writer.writeAll("{\n");
 
     const start: usize = @intCast(impl_decl.methods.start);
     const end: usize = @intCast(impl_decl.methods.end());
@@ -90,7 +102,13 @@ fn formatInterface(
     try writer.writeAll("interface ");
     try writer.writeAll(interner.get(interface_decl.name) orelse "<missing>");
     try writeGenericParams(writer, ast, interner, interface_decl.generic_params);
-    try writer.writeAll(" {\n");
+    if (interface_decl.where_predicates.len != 0) {
+        try writer.writeByte('\n');
+        try writeWhereClause(writer, ast, interner, interface_decl.where_predicates, 0);
+    } else {
+        try writer.writeByte(' ');
+    }
+    try writer.writeAll("{\n");
 
     const start: usize = @intCast(interface_decl.methods.start);
     const end: usize = @intCast(interface_decl.methods.end());
@@ -118,6 +136,11 @@ fn formatInterfaceMethod(
     if (method.return_type) |return_type| {
         try writer.writeAll(" -> ");
         try writeTypeExpr(writer, ast, interner, return_type);
+    }
+    if (method.where_predicates.len != 0) {
+        try writer.writeByte('\n');
+        try writeWhereClause(writer, ast, interner, method.where_predicates, indent);
+        try writeIndent(writer, indent);
     }
     try writer.writeAll(";\n");
 }
@@ -178,6 +201,26 @@ fn isImplicitSelfParam(
         },
         else => false,
     };
+}
+
+fn writeWhereClause(
+    writer: *std.Io.Writer,
+    ast: *const ast_mod.Ast,
+    interner: *const base.Interner,
+    predicates: base.Range,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
+    try writer.writeAll("where\n");
+    const start: usize = @intCast(predicates.start);
+    const end: usize = @intCast(predicates.end());
+    for (ast.where_predicates.items[start..end]) |predicate| {
+        try writeIndent(writer, indent + 1);
+        try writeTypeExpr(writer, ast, interner, predicate.subject);
+        try writer.writeAll(": ");
+        try writeTypeExpr(writer, ast, interner, predicate.constraint);
+        try writer.writeAll(",\n");
+    }
 }
 
 fn writeBlock(
@@ -569,7 +612,13 @@ fn formatStruct(
     try writer.writeAll("struct ");
     try writer.writeAll(interner.get(struct_decl.name) orelse "<missing>");
     try writeGenericParams(writer, ast, interner, struct_decl.generic_params);
-    try writer.writeAll(" {\n");
+    if (struct_decl.where_predicates.len != 0) {
+        try writer.writeByte('\n');
+        try writeWhereClause(writer, ast, interner, struct_decl.where_predicates, 0);
+    } else {
+        try writer.writeByte(' ');
+    }
+    try writer.writeAll("{\n");
 
     const start: usize = @intCast(struct_decl.fields.start);
     const end: usize = @intCast(struct_decl.fields.end());
@@ -595,7 +644,13 @@ fn formatEnum(
     try writer.writeAll("enum ");
     try writer.writeAll(interner.get(enum_decl.name) orelse "<missing>");
     try writeGenericParams(writer, ast, interner, enum_decl.generic_params);
-    try writer.writeAll(" {\n");
+    if (enum_decl.where_predicates.len != 0) {
+        try writer.writeByte('\n');
+        try writeWhereClause(writer, ast, interner, enum_decl.where_predicates, 0);
+    } else {
+        try writer.writeByte(' ');
+    }
+    try writer.writeAll("{\n");
 
     const start: usize = @intCast(enum_decl.variants.start);
     const end: usize = @intCast(enum_decl.variants.end());

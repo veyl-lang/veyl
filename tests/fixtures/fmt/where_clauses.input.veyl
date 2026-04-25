@@ -1,0 +1,5 @@
+fn first<T>(value:T)->T where T:Display,{value}
+struct Box<T> where T:Display,{value:T,}
+enum Maybe<T> where T:Display,{Some(T),None,}
+interface Show<T> where T:Display,{fn show(self)->Str;}
+impl<T> Box<T> where T:Display,{fn value(self)->T{self.value}}
