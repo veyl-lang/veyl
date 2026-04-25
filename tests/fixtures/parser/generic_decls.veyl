@@ -1,0 +1,25 @@
+type Pair<T> = Array<T>;
+
+struct Box<T> {
+    value: T,
+}
+
+enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+fn max<T: Ord>(a: T, b: T) -> T {
+    if a > b {
+        a
+    } else {
+        b
+    }
+}
+
+fn sort<T>(items: Array<T>) -> Array<T>
+where
+    T: Ord,
+{
+    items
+}

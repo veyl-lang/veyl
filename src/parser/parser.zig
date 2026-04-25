@@ -57,6 +57,10 @@ const Parser = struct {
                 try self.parseTypeAlias(visibility, start_span);
             } else if (self.peekKind() == .keyword_fn) {
                 try self.parseFn(visibility, start_span);
+            } else if (self.peekKind() == .keyword_impl) {
+                try self.parseImpl(visibility, start_span);
+            } else if (self.peekKind() == .keyword_interface) {
+                try self.parseInterface(visibility, start_span);
             } else if (self.peekKind() == .keyword_struct) {
                 try self.parseStruct(visibility, start_span);
             } else if (self.peekKind() == .keyword_enum) {
@@ -150,9 +154,14 @@ const Parser = struct {
     }
 
     fn parseFn(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
-        _ = (try self.expect(.keyword_fn, "expected function declaration")) orelse return;
-        const name_token = (try self.expectIdentifier("expected function name")) orelse return;
-        _ = (try self.expect(.l_paren, "expected `(` after function name")) orelse return;
+        _ = try self.tree.addDecl(.{ .fn_decl = try self.parseFnDecl(visibility, start_span) });
+    }
+
+    fn parseFnDecl(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!ast_mod.FnDecl {
+        _ = (try self.expect(.keyword_fn, "expected function declaration")) orelse return self.errorFnDecl(visibility, start_span);
+        const name_token = (try self.expectIdentifier("expected function name")) orelse return self.errorFnDecl(visibility, start_span);
+        const generic_params = try self.parseGenericParams();
+        _ = (try self.expect(.l_paren, "expected `(` after function name")) orelse return self.errorFnDecl(visibility, start_span);
 
         const params_start = self.tree.reserveFnParams();
         var params_len: u32 = 0;
@@ -163,23 +172,205 @@ const Parser = struct {
             if (self.match(.comma) == null) break;
         }
 
-        _ = (try self.expect(.r_paren, "expected `)` after function parameters")) orelse return;
+        _ = (try self.expect(.r_paren, "expected `)` after function parameters")) orelse return self.errorFnDecl(visibility, start_span);
 
         var return_type: ?ast_mod.TypeId = null;
         if (self.match(.arrow) != null) {
             return_type = try self.parseTypeExpr("expected function return type");
         }
 
+        const where_predicates = try self.parseWhereClause();
+
         const body = try self.parseBlock();
-        _ = try self.tree.addDecl(.{ .fn_decl = .{
+        return .{
             .visibility = visibility,
             .name = try self.internToken(name_token),
             .name_span = name_token.span,
+            .generic_params = generic_params,
             .params = .{ .start = params_start, .len = params_len },
             .return_type = return_type,
+            .where_predicates = where_predicates,
             .body = body,
             .span = base.Span.join(start_span, self.tree.blocks.items[body].span),
+        };
+    }
+
+    fn errorFnDecl(self: *Parser, visibility: ast_mod.Visibility, span: base.Span) Allocator.Error!ast_mod.FnDecl {
+        const body = try self.emptyBlock(span);
+        return .{
+            .visibility = visibility,
+            .name = try self.interner.intern("<error>"),
+            .name_span = span,
+            .params = .{ .start = self.tree.reserveFnParams(), .len = 0 },
+            .body = body,
+            .span = span,
+        };
+    }
+
+    fn parseImpl(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_impl, "expected impl declaration")) orelse return;
+        const generic_params = try self.parseGenericParams();
+
+        const first_type = try self.parseTypeExpr("expected impl type");
+        var interface_type: ?ast_mod.TypeId = null;
+        var self_type = first_type;
+        if (self.match(.keyword_for) != null) {
+            interface_type = first_type;
+            self_type = try self.parseTypeExpr("expected impl target type after `for`");
+        }
+
+        const where_predicates = try self.parseWhereClause();
+        _ = (try self.expect(.l_brace, "expected `{` after impl type")) orelse return;
+
+        const methods_start = self.tree.reserveImplMethods();
+        var methods_len: u32 = 0;
+        var end_span = self.tree.types.items[self_type].span();
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            self.skipTrivia();
+            if (self.peekKind() == .r_brace or self.peekKind() == .eof) break;
+
+            var method_visibility: ast_mod.Visibility = .package;
+            var method_start = self.peek().span;
+            if (self.match(.keyword_pub)) |token| {
+                method_visibility = .public;
+                method_start = token.span;
+            } else if (self.match(.keyword_private)) |token| {
+                method_visibility = .private;
+                method_start = token.span;
+            }
+
+            if (self.peekKind() != .keyword_fn) {
+                try self.addError(self.peek().span, "expected method declaration");
+                _ = self.advance();
+                continue;
+            }
+
+            const method = try self.parseFnDecl(method_visibility, method_start);
+            try self.tree.addImplMethod(method);
+            methods_len += 1;
+            end_span = method.span;
+        }
+
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after impl body");
+        }
+
+        _ = try self.tree.addDecl(.{ .impl_decl = .{
+            .visibility = visibility,
+            .generic_params = generic_params,
+            .interface_type = interface_type,
+            .self_type = self_type,
+            .where_predicates = where_predicates,
+            .methods = .{ .start = methods_start, .len = methods_len },
+            .span = base.Span.join(start_span, end_span),
         } });
+    }
+
+    fn parseInterface(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
+        _ = (try self.expect(.keyword_interface, "expected interface declaration")) orelse return;
+        const name_token = (try self.expectIdentifier("expected interface name")) orelse return;
+        const generic_params = try self.parseGenericParams();
+        const where_predicates = try self.parseWhereClause();
+        _ = (try self.expect(.l_brace, "expected `{` after interface name")) orelse return;
+
+        const methods_start = self.tree.reserveInterfaceMethods();
+        var methods_len: u32 = 0;
+        var end_span = name_token.span;
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            self.skipTrivia();
+            if (self.peekKind() == .r_brace or self.peekKind() == .eof) break;
+
+            var method_visibility: ast_mod.Visibility = .package;
+            var method_start = self.peek().span;
+            if (self.match(.keyword_pub)) |token| {
+                method_visibility = .public;
+                method_start = token.span;
+            } else if (self.match(.keyword_private)) |token| {
+                method_visibility = .private;
+                method_start = token.span;
+            }
+
+            if (self.peekKind() != .keyword_fn) {
+                try self.addError(self.peek().span, "expected interface method declaration");
+                _ = self.advance();
+                continue;
+            }
+
+            const method = try self.parseInterfaceMethod(method_visibility, method_start);
+            try self.tree.addInterfaceMethod(method);
+            methods_len += 1;
+            end_span = method.span;
+        }
+
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after interface body");
+        }
+
+        _ = try self.tree.addDecl(.{ .interface_decl = .{
+            .visibility = visibility,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .generic_params = generic_params,
+            .where_predicates = where_predicates,
+            .methods = .{ .start = methods_start, .len = methods_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
+    }
+
+    fn parseInterfaceMethod(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!ast_mod.InterfaceMethod {
+        _ = (try self.expect(.keyword_fn, "expected interface method declaration")) orelse return self.errorInterfaceMethod(visibility, start_span);
+        const name_token = (try self.expectIdentifier("expected interface method name")) orelse return self.errorInterfaceMethod(visibility, start_span);
+        const generic_params = try self.parseGenericParams();
+        _ = (try self.expect(.l_paren, "expected `(` after interface method name")) orelse return self.errorInterfaceMethod(visibility, start_span);
+
+        const params_start = self.tree.reserveFnParams();
+        var params_len: u32 = 0;
+        while (self.peekKind() != .r_paren and self.peekKind() != .eof) {
+            const param = try self.parseFnParam();
+            try self.tree.addFnParam(param);
+            params_len += 1;
+            if (self.match(.comma) == null) break;
+        }
+
+        _ = (try self.expect(.r_paren, "expected `)` after interface method parameters")) orelse return self.errorInterfaceMethod(visibility, start_span);
+
+        var return_type: ?ast_mod.TypeId = null;
+        if (self.match(.arrow) != null) {
+            return_type = try self.parseTypeExpr("expected interface method return type");
+        }
+        const where_predicates = try self.parseWhereClause();
+
+        var end_span = self.previous().span;
+        if (self.match(.semicolon)) |semicolon| {
+            end_span = semicolon.span;
+        } else {
+            try self.addError(self.peek().span, "expected `;` after interface method signature");
+        }
+
+        return .{
+            .visibility = visibility,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .generic_params = generic_params,
+            .params = .{ .start = params_start, .len = params_len },
+            .return_type = return_type,
+            .where_predicates = where_predicates,
+            .span = base.Span.join(start_span, end_span),
+        };
+    }
+
+    fn errorInterfaceMethod(self: *Parser, visibility: ast_mod.Visibility, span: base.Span) Allocator.Error!ast_mod.InterfaceMethod {
+        return .{
+            .visibility = visibility,
+            .name = try self.interner.intern("<error>"),
+            .name_span = span,
+            .params = .{ .start = self.tree.reserveFnParams(), .len = 0 },
+            .span = span,
+        };
     }
 
     fn parseFnParam(self: *Parser) Allocator.Error!ast_mod.FnParam {
@@ -190,13 +381,31 @@ const Parser = struct {
             start_span = mut_token.span;
         }
 
-        const name_token = (try self.expectIdentifier("expected function parameter name")) orelse return .{
+        const name_token = (try self.expectParamName("expected function parameter name")) orelse return .{
             .is_mut = is_mut,
             .name = try self.interner.intern("<error>"),
             .name_span = start_span,
             .type_expr = try self.tree.addType(.{ .unit = start_span }),
             .span = start_span,
         };
+        if (name_token.kind == .keyword_self and self.peekKind() != .colon) {
+            const self_type_start = self.tree.reservePath();
+            try self.tree.addPathSegment(.{
+                .name = try self.interner.intern("Self"),
+                .span = name_token.span,
+            });
+            const self_type = try self.tree.addType(.{ .path = .{
+                .segments = .{ .start = self_type_start, .len = 1 },
+                .span = name_token.span,
+            } });
+            return .{
+                .is_mut = is_mut,
+                .name = try self.internToken(name_token),
+                .name_span = name_token.span,
+                .type_expr = self_type,
+                .span = base.Span.join(start_span, name_token.span),
+            };
+        }
         _ = (try self.expect(.colon, "expected `:` after function parameter name")) orelse return .{
             .is_mut = is_mut,
             .name = try self.internToken(name_token),
@@ -213,6 +422,58 @@ const Parser = struct {
             .type_expr = type_expr,
             .span = base.Span.join(start_span, self.previous().span),
         };
+    }
+
+    fn parseGenericParams(self: *Parser) Allocator.Error!base.Range {
+        if (self.match(.less) == null) return .{ .start = 0, .len = 0 };
+
+        const params_start = self.tree.reserveGenericParams();
+        var params_len: u32 = 0;
+        while (self.peekKind() != .greater and self.peekKind() != .eof) {
+            const name_token = (try self.expectTypeSegment("expected generic parameter name")) orelse break;
+            var constraint: ?ast_mod.TypeId = null;
+            var end_span = name_token.span;
+            if (self.match(.colon) != null) {
+                constraint = try self.parseTypeExpr("expected generic parameter constraint");
+                end_span = self.tree.types.items[constraint.?].span();
+            }
+
+            try self.tree.addGenericParam(.{
+                .name = try self.internToken(name_token),
+                .name_span = name_token.span,
+                .constraint = constraint,
+                .span = base.Span.join(name_token.span, end_span),
+            });
+            params_len += 1;
+
+            if (self.match(.comma) == null) break;
+        }
+
+        _ = try self.expect(.greater, "expected `>` after generic parameters");
+        return .{ .start = params_start, .len = params_len };
+    }
+
+    fn parseWhereClause(self: *Parser) Allocator.Error!base.Range {
+        if (self.match(.keyword_where) == null) return .{ .start = 0, .len = 0 };
+
+        const predicates_start = self.tree.reserveWherePredicates();
+        var predicates_len: u32 = 0;
+        while (self.peekKind() != .l_brace and self.peekKind() != .semicolon and self.peekKind() != .eof) {
+            const subject = try self.parseTypeExpr("expected where-clause subject");
+            _ = (try self.expect(.colon, "expected `:` in where clause")) orelse break;
+            const constraint = try self.parseTypeExpr("expected where-clause constraint");
+
+            try self.tree.addWherePredicate(.{
+                .subject = subject,
+                .constraint = constraint,
+                .span = base.Span.join(self.tree.types.items[subject].span(), self.tree.types.items[constraint].span()),
+            });
+            predicates_len += 1;
+
+            if (self.match(.comma) == null) break;
+        }
+
+        return .{ .start = predicates_start, .len = predicates_len };
     }
 
     fn parseBlock(self: *Parser) Allocator.Error!ast_mod.BlockId {
@@ -528,7 +789,7 @@ const Parser = struct {
     fn parsePrimary(self: *Parser) Allocator.Error!ast_mod.ExprId {
         const token = self.advance();
         switch (token.kind) {
-            .identifier => return self.tree.addExpr(.{ .name = .{
+            .identifier, .keyword_self, .keyword_Self => return self.tree.addExpr(.{ .name = .{
                 .symbol = try self.internToken(token),
                 .span = token.span,
             } }),
@@ -939,6 +1200,7 @@ const Parser = struct {
     fn parseTypeAlias(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
         _ = (try self.expect(.keyword_type, "expected type alias declaration")) orelse return;
         const name_token = (try self.expectIdentifier("expected type alias name")) orelse return;
+        const generic_params = try self.parseGenericParams();
         _ = (try self.expect(.equal, "expected `=` after type alias name")) orelse return;
 
         const aliased_type = try self.parseTypeExpr("expected aliased type");
@@ -951,6 +1213,7 @@ const Parser = struct {
             .visibility = visibility,
             .name = try self.internToken(name_token),
             .name_span = name_token.span,
+            .generic_params = generic_params,
             .aliased_type = aliased_type,
             .span = base.Span.join(start_span, end_span),
         } });
@@ -960,6 +1223,8 @@ const Parser = struct {
         _ = (try self.expect(.keyword_enum, "expected enum declaration")) orelse return;
         const name_token = (try self.expectIdentifier("expected enum name")) orelse return;
         const name = try self.internToken(name_token);
+        const generic_params = try self.parseGenericParams();
+        const where_predicates = try self.parseWhereClause();
 
         _ = (try self.expect(.l_brace, "expected `{` after enum name")) orelse return;
 
@@ -991,6 +1256,8 @@ const Parser = struct {
             .visibility = visibility,
             .name = name,
             .name_span = name_token.span,
+            .generic_params = generic_params,
+            .where_predicates = where_predicates,
             .variants = .{ .start = variants_start, .len = variants_len },
             .span = base.Span.join(start_span, end_span),
         } });
@@ -1094,6 +1361,8 @@ const Parser = struct {
         _ = (try self.expect(.keyword_struct, "expected struct declaration")) orelse return;
         const name_token = (try self.expectIdentifier("expected struct name")) orelse return;
         const name = try self.internToken(name_token);
+        const generic_params = try self.parseGenericParams();
+        const where_predicates = try self.parseWhereClause();
 
         _ = (try self.expect(.l_brace, "expected `{` after struct name")) orelse return;
 
@@ -1140,6 +1409,8 @@ const Parser = struct {
             .visibility = visibility,
             .name = name,
             .name_span = name_token.span,
+            .generic_params = generic_params,
+            .where_predicates = where_predicates,
             .fields = .{ .start = fields_start, .len = fields_len },
             .span = base.Span.join(start_span, end_span),
         } });
@@ -1248,6 +1519,16 @@ const Parser = struct {
         if (self.peekKind() == .identifier) return self.advance();
         try self.addError(self.peek().span, message);
         return null;
+    }
+
+    fn expectParamName(self: *Parser, message: []const u8) Allocator.Error!?lexer.Token {
+        return switch (self.peekKind()) {
+            .identifier, .keyword_self => self.advance(),
+            else => {
+                try self.addError(self.peek().span, message);
+                return null;
+            },
+        };
     }
 
     fn internToken(self: *Parser, token: lexer.Token) Allocator.Error!base.SymbolId {

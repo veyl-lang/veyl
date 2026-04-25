@@ -1,0 +1,13 @@
+Root
+  InterfaceDecl public Reader
+    Method package read
+      Param mut self: Self
+      Param buf: Bytes
+      Return Result<Int, IoError>
+  InterfaceDecl package Parser
+    GenericParam T
+    Where T: Reader
+    Method package parse
+      GenericParam Input: Reader
+      Param input: Input
+      Return Result<T, ParseError>

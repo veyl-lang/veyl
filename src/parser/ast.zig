@@ -43,6 +43,7 @@ pub const TypeAliasDecl = struct {
     visibility: Visibility,
     name: base.SymbolId,
     name_span: base.Span,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
     aliased_type: TypeId,
     span: base.Span,
 };
@@ -67,13 +68,59 @@ pub const FnParam = struct {
     span: base.Span,
 };
 
+pub const GenericParam = struct {
+    name: base.SymbolId,
+    name_span: base.Span,
+    constraint: ?TypeId = null,
+    span: base.Span,
+};
+
+pub const WherePredicate = struct {
+    subject: TypeId,
+    constraint: TypeId,
+    span: base.Span,
+};
+
 pub const FnDecl = struct {
     visibility: Visibility,
     name: base.SymbolId,
     name_span: base.Span,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
     params: base.Range,
     return_type: ?TypeId = null,
+    where_predicates: base.Range = .{ .start = 0, .len = 0 },
     body: BlockId,
+    span: base.Span,
+};
+
+pub const ImplDecl = struct {
+    visibility: Visibility,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
+    interface_type: ?TypeId = null,
+    self_type: TypeId,
+    where_predicates: base.Range = .{ .start = 0, .len = 0 },
+    methods: base.Range = .{ .start = 0, .len = 0 },
+    span: base.Span,
+};
+
+pub const InterfaceMethod = struct {
+    visibility: Visibility,
+    name: base.SymbolId,
+    name_span: base.Span,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
+    params: base.Range,
+    return_type: ?TypeId = null,
+    where_predicates: base.Range = .{ .start = 0, .len = 0 },
+    span: base.Span,
+};
+
+pub const InterfaceDecl = struct {
+    visibility: Visibility,
+    name: base.SymbolId,
+    name_span: base.Span,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
+    where_predicates: base.Range = .{ .start = 0, .len = 0 },
+    methods: base.Range = .{ .start = 0, .len = 0 },
     span: base.Span,
 };
 
@@ -300,6 +347,8 @@ pub const StructDecl = struct {
     visibility: Visibility,
     name: base.SymbolId,
     name_span: base.Span,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
+    where_predicates: base.Range = .{ .start = 0, .len = 0 },
     fields: base.Range,
     span: base.Span,
 };
@@ -329,6 +378,8 @@ pub const EnumDecl = struct {
     visibility: Visibility,
     name: base.SymbolId,
     name_span: base.Span,
+    generic_params: base.Range = .{ .start = 0, .len = 0 },
+    where_predicates: base.Range = .{ .start = 0, .len = 0 },
     variants: base.Range,
     span: base.Span,
 };
@@ -337,6 +388,8 @@ pub const Decl = union(enum) {
     import: ImportDecl,
     type_alias: TypeAliasDecl,
     fn_decl: FnDecl,
+    impl_decl: ImplDecl,
+    interface_decl: InterfaceDecl,
     struct_decl: StructDecl,
     enum_decl: EnumDecl,
 
@@ -345,6 +398,8 @@ pub const Decl = union(enum) {
             .import => |decl| decl.span,
             .type_alias => |decl| decl.span,
             .fn_decl => |decl| decl.span,
+            .impl_decl => |decl| decl.span,
+            .interface_decl => |decl| decl.span,
             .struct_decl => |decl| decl.span,
             .enum_decl => |decl| decl.span,
         };
@@ -360,6 +415,10 @@ pub const Ast = struct {
     types: std.ArrayListUnmanaged(TypeExpr) = .empty,
     type_args: std.ArrayListUnmanaged(TypeId) = .empty,
     fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
+    generic_params: std.ArrayListUnmanaged(GenericParam) = .empty,
+    where_predicates: std.ArrayListUnmanaged(WherePredicate) = .empty,
+    impl_methods: std.ArrayListUnmanaged(FnDecl) = .empty,
+    interface_methods: std.ArrayListUnmanaged(InterfaceMethod) = .empty,
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
     struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
@@ -388,6 +447,10 @@ pub const Ast = struct {
         self.types.deinit(self.allocator);
         self.type_args.deinit(self.allocator);
         self.fn_params.deinit(self.allocator);
+        self.generic_params.deinit(self.allocator);
+        self.where_predicates.deinit(self.allocator);
+        self.impl_methods.deinit(self.allocator);
+        self.interface_methods.deinit(self.allocator);
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
         self.struct_literal_fields.deinit(self.allocator);
@@ -450,6 +513,38 @@ pub const Ast = struct {
 
     pub fn addFnParam(self: *Ast, param: FnParam) Allocator.Error!void {
         try self.fn_params.append(self.allocator, param);
+    }
+
+    pub fn reserveGenericParams(self: *const Ast) u32 {
+        return @intCast(self.generic_params.items.len);
+    }
+
+    pub fn addGenericParam(self: *Ast, param: GenericParam) Allocator.Error!void {
+        try self.generic_params.append(self.allocator, param);
+    }
+
+    pub fn reserveWherePredicates(self: *const Ast) u32 {
+        return @intCast(self.where_predicates.items.len);
+    }
+
+    pub fn addWherePredicate(self: *Ast, predicate: WherePredicate) Allocator.Error!void {
+        try self.where_predicates.append(self.allocator, predicate);
+    }
+
+    pub fn reserveImplMethods(self: *const Ast) u32 {
+        return @intCast(self.impl_methods.items.len);
+    }
+
+    pub fn addImplMethod(self: *Ast, method: FnDecl) Allocator.Error!void {
+        try self.impl_methods.append(self.allocator, method);
+    }
+
+    pub fn reserveInterfaceMethods(self: *const Ast) u32 {
+        return @intCast(self.interface_methods.items.len);
+    }
+
+    pub fn addInterfaceMethod(self: *Ast, method: InterfaceMethod) Allocator.Error!void {
+        try self.interface_methods.append(self.allocator, method);
     }
 
     pub fn addExpr(self: *Ast, expr: Expr) Allocator.Error!ExprId {
@@ -559,6 +654,8 @@ pub fn dumpAst(allocator: Allocator, ast: *const Ast, interner: *const base.Inte
             .import => |import_decl| try dumpImport(&output.writer, ast, interner, import_decl),
             .type_alias => |type_alias| try dumpTypeAlias(&output.writer, ast, interner, type_alias),
             .fn_decl => |fn_decl| try dumpFn(&output.writer, ast, interner, fn_decl),
+            .impl_decl => |impl_decl| try dumpImpl(&output.writer, ast, interner, impl_decl),
+            .interface_decl => |interface_decl| try dumpInterface(&output.writer, ast, interner, interface_decl),
             .struct_decl => |struct_decl| try dumpStruct(&output.writer, ast, interner, struct_decl),
             .enum_decl => |enum_decl| try dumpEnum(&output.writer, ast, interner, enum_decl),
         }
@@ -573,15 +670,32 @@ fn dumpFn(
     interner: *const base.Interner,
     fn_decl: FnDecl,
 ) std.Io.Writer.Error!void {
-    try writer.print("  FnDecl {s} {s}\n", .{
+    try dumpFnLike(writer, ast, interner, fn_decl, 1, "FnDecl");
+}
+
+fn dumpFnLike(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    fn_decl: FnDecl,
+    indent: usize,
+    label: []const u8,
+) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
+    try writer.print("{s} {s} {s}\n", .{
+        label,
         @tagName(fn_decl.visibility),
         interner.get(fn_decl.name) orelse "<missing>",
     });
 
+    try dumpGenericParams(writer, ast, interner, fn_decl.generic_params, indent + 1);
+    try dumpWherePredicates(writer, ast, interner, fn_decl.where_predicates, indent + 1);
+
     const start: usize = @intCast(fn_decl.params.start);
     const end: usize = @intCast(fn_decl.params.end());
     for (ast.fn_params.items[start..end]) |param| {
-        try writer.print("    Param {s}{s}: ", .{
+        try writeIndent(writer, indent + 1);
+        try writer.print("Param {s}{s}: ", .{
             if (param.is_mut) "mut " else "",
             interner.get(param.name) orelse "<missing>",
         });
@@ -589,7 +703,8 @@ fn dumpFn(
         try writer.writeByte('\n');
     }
 
-    try writer.writeAll("    Return ");
+    try writeIndent(writer, indent + 1);
+    try writer.writeAll("Return ");
     if (fn_decl.return_type) |return_type| {
         try dumpTypeExpr(writer, ast, interner, return_type);
     } else {
@@ -597,7 +712,7 @@ fn dumpFn(
     }
     try writer.writeByte('\n');
 
-    try dumpBlock(writer, ast, interner, ast.blocks.items[fn_decl.body], 2);
+    try dumpBlock(writer, ast, interner, ast.blocks.items[fn_decl.body], indent + 1);
 }
 
 fn dumpBlock(
@@ -911,6 +1026,128 @@ fn dumpTypeAlias(
     });
     try dumpTypeExpr(writer, ast, interner, type_alias.aliased_type);
     try writer.writeByte('\n');
+    try dumpGenericParams(writer, ast, interner, type_alias.generic_params, 2);
+}
+
+fn dumpGenericParams(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    params: base.Range,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    const start: usize = @intCast(params.start);
+    const end: usize = @intCast(params.end());
+    for (ast.generic_params.items[start..end]) |param| {
+        try writeIndent(writer, indent);
+        try writer.print("GenericParam {s}", .{interner.get(param.name) orelse "<missing>"});
+        if (param.constraint) |constraint| {
+            try writer.writeAll(": ");
+            try dumpTypeExpr(writer, ast, interner, constraint);
+        }
+        try writer.writeByte('\n');
+    }
+}
+
+fn dumpImpl(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    impl_decl: ImplDecl,
+) std.Io.Writer.Error!void {
+    try writer.print("  ImplDecl {s} ", .{@tagName(impl_decl.visibility)});
+    if (impl_decl.interface_type) |interface_type| {
+        try dumpTypeExpr(writer, ast, interner, interface_type);
+        try writer.writeAll(" for ");
+    }
+    try dumpTypeExpr(writer, ast, interner, impl_decl.self_type);
+    try writer.writeByte('\n');
+
+    try dumpGenericParams(writer, ast, interner, impl_decl.generic_params, 2);
+    try dumpWherePredicates(writer, ast, interner, impl_decl.where_predicates, 2);
+
+    const start: usize = @intCast(impl_decl.methods.start);
+    const end: usize = @intCast(impl_decl.methods.end());
+    for (ast.impl_methods.items[start..end]) |method| {
+        try dumpFnLike(writer, ast, interner, method, 2, "Method");
+    }
+}
+
+fn dumpInterface(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    interface_decl: InterfaceDecl,
+) std.Io.Writer.Error!void {
+    try writer.print("  InterfaceDecl {s} {s}\n", .{
+        @tagName(interface_decl.visibility),
+        interner.get(interface_decl.name) orelse "<missing>",
+    });
+
+    try dumpGenericParams(writer, ast, interner, interface_decl.generic_params, 2);
+    try dumpWherePredicates(writer, ast, interner, interface_decl.where_predicates, 2);
+
+    const start: usize = @intCast(interface_decl.methods.start);
+    const end: usize = @intCast(interface_decl.methods.end());
+    for (ast.interface_methods.items[start..end]) |method| {
+        try dumpInterfaceMethod(writer, ast, interner, method, 2);
+    }
+}
+
+fn dumpInterfaceMethod(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    method: InterfaceMethod,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
+    try writer.print("Method {s} {s}\n", .{
+        @tagName(method.visibility),
+        interner.get(method.name) orelse "<missing>",
+    });
+    try dumpGenericParams(writer, ast, interner, method.generic_params, indent + 1);
+    try dumpWherePredicates(writer, ast, interner, method.where_predicates, indent + 1);
+
+    const start: usize = @intCast(method.params.start);
+    const end: usize = @intCast(method.params.end());
+    for (ast.fn_params.items[start..end]) |param| {
+        try writeIndent(writer, indent + 1);
+        try writer.print("Param {s}{s}: ", .{
+            if (param.is_mut) "mut " else "",
+            interner.get(param.name) orelse "<missing>",
+        });
+        try dumpTypeExpr(writer, ast, interner, param.type_expr);
+        try writer.writeByte('\n');
+    }
+
+    try writeIndent(writer, indent + 1);
+    try writer.writeAll("Return ");
+    if (method.return_type) |return_type| {
+        try dumpTypeExpr(writer, ast, interner, return_type);
+    } else {
+        try writer.writeAll("()");
+    }
+    try writer.writeByte('\n');
+}
+
+fn dumpWherePredicates(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    predicates: base.Range,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    const start: usize = @intCast(predicates.start);
+    const end: usize = @intCast(predicates.end());
+    for (ast.where_predicates.items[start..end]) |predicate| {
+        try writeIndent(writer, indent);
+        try writer.writeAll("Where ");
+        try dumpTypeExpr(writer, ast, interner, predicate.subject);
+        try writer.writeAll(": ");
+        try dumpTypeExpr(writer, ast, interner, predicate.constraint);
+        try writer.writeByte('\n');
+    }
 }
 
 fn dumpEnum(
@@ -923,6 +1160,9 @@ fn dumpEnum(
         @tagName(enum_decl.visibility),
         interner.get(enum_decl.name) orelse "<missing>",
     });
+
+    try dumpGenericParams(writer, ast, interner, enum_decl.generic_params, 2);
+    try dumpWherePredicates(writer, ast, interner, enum_decl.where_predicates, 2);
 
     const start: usize = @intCast(enum_decl.variants.start);
     const end: usize = @intCast(enum_decl.variants.end());
@@ -957,6 +1197,9 @@ fn dumpStruct(
         @tagName(struct_decl.visibility),
         interner.get(struct_decl.name) orelse "<missing>",
     });
+
+    try dumpGenericParams(writer, ast, interner, struct_decl.generic_params, 2);
+    try dumpWherePredicates(writer, ast, interner, struct_decl.where_predicates, 2);
 
     const start: usize = @intCast(struct_decl.fields.start);
     const end: usize = @intCast(struct_decl.fields.end());

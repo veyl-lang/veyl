@@ -1,0 +1,15 @@
+impl<T> Box<T>
+where
+    T: Display,
+{
+    pub fn new(value: T) -> Self {
+        Self { value }
+    }
+
+    fn get(self) -> T {
+        self.value
+    }
+}
+
+impl Reader for File {
+}

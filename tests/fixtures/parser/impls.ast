@@ -1,0 +1,20 @@
+Root
+  ImplDecl package Box<T>
+    GenericParam T
+    Where T: Display
+    Method public new
+      Param value: T
+      Return Self
+      Block
+        FinalExpr
+          StructLiteral
+            Name Self
+            Field value
+    Method package get
+      Param self: Self
+      Return T
+      Block
+        FinalExpr
+          Field value
+            Name self
+  ImplDecl package Reader for File

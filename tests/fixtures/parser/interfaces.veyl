@@ -1,0 +1,10 @@
+pub interface Reader {
+    fn read(mut self, buf: Bytes) -> Result<Int, IoError>;
+}
+
+interface Parser<T>
+where
+    T: Reader,
+{
+    fn parse<Input: Reader>(input: Input) -> Result<T, ParseError>;
+}

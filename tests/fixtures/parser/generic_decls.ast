@@ -1,0 +1,41 @@
+Root
+  TypeAliasDecl package Pair = Array<T>
+    GenericParam T
+  StructDecl package Box
+    GenericParam T
+    Field package value: T
+  EnumDecl package Result
+    GenericParam T
+    GenericParam E
+    Variant tuple Ok
+      Field _: T
+    Variant tuple Err
+      Field _: E
+  FnDecl package max
+    GenericParam T: Ord
+    Param a: T
+    Param b: T
+    Return T
+    Block
+      FinalExpr
+        IfExpr
+          Condition
+            Binary greater
+              Name a
+              Name b
+          Then
+            Block
+              FinalExpr
+                Name a
+          Else
+            Block
+              FinalExpr
+                Name b
+  FnDecl package sort
+    GenericParam T
+    Where T: Ord
+    Param items: Array<T>
+    Return Array<T>
+    Block
+      FinalExpr
+        Name items
