@@ -2,9 +2,16 @@ Root
   FnDecl public birthday
     Param mut user: User
     Return User
+    Block
+      ExprStmt
+      FinalExpr
   FnDecl package log_user
     Param user: User
     Return ()
+    Block
+      ExprStmt
   FnDecl private parse_line
     Param line: Str
     Return Pair
+    Block
+      FinalExpr

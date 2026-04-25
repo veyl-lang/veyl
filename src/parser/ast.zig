@@ -5,6 +5,7 @@ const Allocator = std.mem.Allocator;
 const DumpError = Allocator.Error || std.Io.Writer.Error;
 
 pub const DeclId = base.DeclId;
+pub const BlockId = u32;
 
 pub const Visibility = enum {
     package,
@@ -47,7 +48,36 @@ pub const FnDecl = struct {
     name_span: base.Span,
     params: base.Range,
     return_type: ?base.Range = null,
-    body_span: base.Span,
+    body: BlockId,
+    span: base.Span,
+};
+
+pub const RawExpr = struct {
+    span: base.Span,
+};
+
+pub const LetStmt = struct {
+    is_mut: bool,
+    name: base.SymbolId,
+    name_span: base.Span,
+    value: RawExpr,
+    span: base.Span,
+};
+
+pub const ReturnStmt = struct {
+    value: ?RawExpr,
+    span: base.Span,
+};
+
+pub const Stmt = union(enum) {
+    let_stmt: LetStmt,
+    return_stmt: ReturnStmt,
+    expr_stmt: RawExpr,
+};
+
+pub const Block = struct {
+    stmts: base.Range,
+    final_expr: ?RawExpr = null,
     span: base.Span,
 };
 
@@ -120,6 +150,8 @@ pub const Ast = struct {
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
     fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
+    blocks: std.ArrayListUnmanaged(Block) = .empty,
+    stmts: std.ArrayListUnmanaged(Stmt) = .empty,
     struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
     enum_variants: std.ArrayListUnmanaged(EnumVariant) = .empty,
     enum_fields: std.ArrayListUnmanaged(EnumField) = .empty,
@@ -135,6 +167,8 @@ pub const Ast = struct {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
         self.fn_params.deinit(self.allocator);
+        self.blocks.deinit(self.allocator);
+        self.stmts.deinit(self.allocator);
         self.struct_fields.deinit(self.allocator);
         self.enum_variants.deinit(self.allocator);
         self.enum_fields.deinit(self.allocator);
@@ -165,6 +199,20 @@ pub const Ast = struct {
 
     pub fn addFnParam(self: *Ast, param: FnParam) Allocator.Error!void {
         try self.fn_params.append(self.allocator, param);
+    }
+
+    pub fn reserveStmts(self: *const Ast) u32 {
+        return @intCast(self.stmts.items.len);
+    }
+
+    pub fn addStmt(self: *Ast, stmt: Stmt) Allocator.Error!void {
+        try self.stmts.append(self.allocator, stmt);
+    }
+
+    pub fn addBlock(self: *Ast, block: Block) Allocator.Error!BlockId {
+        const id: BlockId = @intCast(self.blocks.items.len);
+        try self.blocks.append(self.allocator, block);
+        return id;
     }
 
     pub fn addStructField(self: *Ast, field: StructField) Allocator.Error!void {
@@ -235,6 +283,64 @@ fn dumpFn(
         try writer.writeAll("()");
     }
     try writer.writeByte('\n');
+
+    try dumpBlock(writer, ast, interner, ast.blocks.items[fn_decl.body], 2);
+}
+
+fn dumpBlock(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    block: Block,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    try writeIndent(writer, indent);
+    try writer.writeAll("Block\n");
+
+    const start: usize = @intCast(block.stmts.start);
+    const end: usize = @intCast(block.stmts.end());
+    for (ast.stmts.items[start..end]) |stmt| {
+        try dumpStmt(writer, ast, interner, stmt, indent + 1);
+    }
+
+    if (block.final_expr != null) {
+        try writeIndent(writer, indent + 1);
+        try writer.writeAll("FinalExpr\n");
+    }
+}
+
+fn dumpStmt(
+    writer: *std.Io.Writer,
+    ast: *const Ast,
+    interner: *const base.Interner,
+    stmt: Stmt,
+    indent: usize,
+) std.Io.Writer.Error!void {
+    switch (stmt) {
+        .let_stmt => |let_stmt| {
+            try writeIndent(writer, indent);
+            try writer.print("LetStmt {s}{s}\n", .{
+                if (let_stmt.is_mut) "mut " else "",
+                interner.get(let_stmt.name) orelse "<missing>",
+            });
+        },
+        .return_stmt => {
+            try writeIndent(writer, indent);
+            try writer.writeAll("ReturnStmt\n");
+        },
+        .expr_stmt => {
+            try writeIndent(writer, indent);
+            try writer.writeAll("ExprStmt\n");
+        },
+    }
+    _ = ast;
+}
+
+fn writeIndent(writer: *std.Io.Writer, indent: usize) std.Io.Writer.Error!void {
+    var i: usize = 0;
+    while (i < indent) : (i += 1) {
+        try writer.writeAll("  ");
+    }
 }
 
 fn dumpTypeAlias(
@@ -410,13 +516,19 @@ test "AST dump renders function declarations" {
         .span = .{ .source = 0, .start = 12, .len = 14 },
     });
 
+    const stmts_start = tree.reserveStmts();
+    const body = try tree.addBlock(.{
+        .stmts = .{ .start = stmts_start, .len = 0 },
+        .span = .{ .source = 0, .start = 35, .len = 2 },
+    });
+
     _ = try tree.addDecl(.{ .fn_decl = .{
         .visibility = .public,
         .name = try interner.intern("birthday"),
         .name_span = .{ .source = 0, .start = 7, .len = 8 },
         .params = .{ .start = params_start, .len = 1 },
         .return_type = .{ .start = user_type_start, .len = 1 },
-        .body_span = .{ .source = 0, .start = 35, .len = 2 },
+        .body = body,
         .span = .{ .source = 0, .start = 0, .len = 37 },
     } });
 
@@ -427,7 +539,8 @@ test "AST dump renders function declarations" {
         "Root\n" ++
             "  FnDecl public birthday\n" ++
             "    Param mut user: User\n" ++
-            "    Return User\n",
+            "    Return User\n" ++
+            "    Block\n",
         dumped,
     );
 }

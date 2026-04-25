@@ -128,15 +128,15 @@ const Parser = struct {
             return_type = try self.parsePath("expected function return type");
         }
 
-        const body_span = try self.parseBodySpan();
+        const body = try self.parseBlock();
         _ = try self.tree.addDecl(.{ .fn_decl = .{
             .visibility = visibility,
             .name = try self.internToken(name_token),
             .name_span = name_token.span,
             .params = .{ .start = params_start, .len = params_len },
             .return_type = return_type,
-            .body_span = body_span,
-            .span = base.Span.join(start_span, body_span),
+            .body = body,
+            .span = base.Span.join(start_span, self.tree.blocks.items[body].span),
         } });
     }
 
@@ -173,26 +173,131 @@ const Parser = struct {
         };
     }
 
-    fn parseBodySpan(self: *Parser) Allocator.Error!base.Span {
-        const open = (try self.expect(.l_brace, "expected function body")) orelse return self.peek().span;
-        var depth: usize = 1;
+    fn parseBlock(self: *Parser) Allocator.Error!ast_mod.BlockId {
+        const open = (try self.expect(.l_brace, "expected function body")) orelse return self.emptyBlock(self.peek().span);
+        const stmts_start = self.tree.reserveStmts();
+        var stmts_len: u32 = 0;
+        var final_expr: ?ast_mod.RawExpr = null;
         var end_span = open.span;
 
-        while (depth > 0 and self.peekKind() != .eof) {
+        while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            self.skipTrivia();
+            if (self.peekKind() == .r_brace or self.peekKind() == .eof) break;
+
+            if (self.peekKind() == .keyword_let) {
+                const stmt = try self.parseLetStmt();
+                try self.tree.addStmt(.{ .let_stmt = stmt });
+                stmts_len += 1;
+                end_span = stmt.span;
+            } else if (self.peekKind() == .keyword_return) {
+                const stmt = try self.parseReturnStmt();
+                try self.tree.addStmt(.{ .return_stmt = stmt });
+                stmts_len += 1;
+                end_span = stmt.span;
+            } else {
+                const expr = self.parseRawExprUntilStmtEnd();
+                end_span = expr.span;
+                if (self.match(.semicolon)) |semicolon| {
+                    try self.tree.addStmt(.{ .expr_stmt = expr });
+                    stmts_len += 1;
+                    end_span = semicolon.span;
+                } else {
+                    final_expr = expr;
+                    break;
+                }
+            }
+        }
+
+        if (self.match(.r_brace)) |brace| {
+            end_span = brace.span;
+        } else {
+            try self.addError(self.peek().span, "expected `}` after block");
+        }
+
+        return self.tree.addBlock(.{
+            .stmts = .{ .start = stmts_start, .len = stmts_len },
+            .final_expr = final_expr,
+            .span = base.Span.join(open.span, end_span),
+        });
+    }
+
+    fn emptyBlock(self: *Parser, span: base.Span) Allocator.Error!ast_mod.BlockId {
+        return self.tree.addBlock(.{
+            .stmts = .{ .start = self.tree.reserveStmts(), .len = 0 },
+            .span = span,
+        });
+    }
+
+    fn parseLetStmt(self: *Parser) Allocator.Error!ast_mod.LetStmt {
+        const let_token = (try self.expect(.keyword_let, "expected let statement")) orelse return error.OutOfMemory;
+        var is_mut = false;
+        if (self.match(.keyword_mut) != null) is_mut = true;
+
+        const name_token = (try self.expectIdentifier("expected binding name")) orelse return error.OutOfMemory;
+        _ = (try self.expect(.equal, "expected `=` after binding name")) orelse return error.OutOfMemory;
+
+        const value = self.parseRawExprUntilStmtEnd();
+        var end_span = value.span;
+        if (self.match(.semicolon)) |semicolon| {
+            end_span = semicolon.span;
+        } else {
+            try self.addError(self.peek().span, "expected `;` after let statement");
+        }
+
+        return .{
+            .is_mut = is_mut,
+            .name = try self.internToken(name_token),
+            .name_span = name_token.span,
+            .value = value,
+            .span = base.Span.join(let_token.span, end_span),
+        };
+    }
+
+    fn parseReturnStmt(self: *Parser) Allocator.Error!ast_mod.ReturnStmt {
+        const return_token = (try self.expect(.keyword_return, "expected return statement")) orelse return error.OutOfMemory;
+        var value: ?ast_mod.RawExpr = null;
+        var end_span = return_token.span;
+        if (self.peekKind() != .semicolon and self.peekKind() != .r_brace and self.peekKind() != .eof) {
+            value = self.parseRawExprUntilStmtEnd();
+            end_span = value.?.span;
+        }
+        if (self.match(.semicolon)) |semicolon| {
+            end_span = semicolon.span;
+        }
+        return .{ .value = value, .span = base.Span.join(return_token.span, end_span) };
+    }
+
+    fn parseRawExprUntilStmtEnd(self: *Parser) ast_mod.RawExpr {
+        const start = self.peek().span;
+        var end = start;
+        var paren_depth: usize = 0;
+        var bracket_depth: usize = 0;
+        var brace_depth: usize = 0;
+
+        while (self.peekKind() != .eof) {
+            const kind = self.peekKind();
+            if (paren_depth == 0 and bracket_depth == 0 and brace_depth == 0 and (kind == .semicolon or kind == .r_brace)) break;
+
             const token = self.advance();
-            end_span = token.span;
-            switch (token.kind) {
-                .l_brace => depth += 1,
-                .r_brace => depth -= 1,
+            end = token.span;
+            switch (kind) {
+                .l_paren => paren_depth += 1,
+                .r_paren => {
+                    if (paren_depth > 0) paren_depth -= 1;
+                },
+                .l_bracket => bracket_depth += 1,
+                .r_bracket => {
+                    if (bracket_depth > 0) bracket_depth -= 1;
+                },
+                .l_brace => brace_depth += 1,
+                .r_brace => {
+                    if (brace_depth > 0) brace_depth -= 1;
+                },
                 else => {},
             }
         }
 
-        if (depth != 0) {
-            try self.addError(self.peek().span, "expected `}` after function body");
-        }
-
-        return base.Span.join(open.span, end_span);
+        return .{ .span = base.Span.join(start, end) };
     }
 
     fn parseTypeAlias(self: *Parser, visibility: ast_mod.Visibility, start_span: base.Span) Allocator.Error!void {
@@ -590,9 +695,12 @@ test "parser builds function declaration AST" {
             "  FnDecl public birthday\n" ++
             "    Param mut user: User\n" ++
             "    Return User\n" ++
+            "    Block\n" ++
+            "      FinalExpr\n" ++
             "  FnDecl package log_user\n" ++
             "    Param user: User\n" ++
-            "    Return ()\n",
+            "    Return ()\n" ++
+            "    Block\n",
         dumped,
     );
 }

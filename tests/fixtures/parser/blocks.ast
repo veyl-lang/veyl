@@ -1,0 +1,13 @@
+Root
+  FnDecl package example
+    Return Int
+    Block
+      LetStmt x
+      LetStmt mut y
+      ExprStmt
+      ReturnStmt
+  FnDecl package final_expr
+    Return Int
+    Block
+      LetStmt x
+      FinalExpr
