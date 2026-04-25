@@ -37,7 +37,7 @@ pub const FunctionDecl = struct {
 
 pub const ImplDecl = struct {
     visibility: parser.Visibility,
-    methods_len: u32,
+    methods: base.Range,
     span: base.Span,
 };
 
@@ -92,6 +92,7 @@ pub const Hir = struct {
     source: base.SourceId,
     decls: std.ArrayListUnmanaged(Decl) = .empty,
     path_segments: std.ArrayListUnmanaged(PathSegment) = .empty,
+    impl_methods: std.ArrayListUnmanaged(FunctionDecl) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
     block_stmt_ids: std.ArrayListUnmanaged(StmtId) = .empty,
@@ -105,6 +106,7 @@ pub const Hir = struct {
     pub fn deinit(self: *Hir) void {
         self.decls.deinit(self.allocator);
         self.path_segments.deinit(self.allocator);
+        self.impl_methods.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
         self.block_stmt_ids.deinit(self.allocator);
@@ -136,13 +138,7 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
                 .name = type_alias.name,
                 .span = type_alias.span,
             } },
-            .fn_decl => |fn_decl| .{ .function = .{
-                .visibility = fn_decl.visibility,
-                .name = fn_decl.name,
-                .params_len = fn_decl.params.len,
-                .body = try lowerBlock(&hir, ast, fn_decl.body),
-                .span = fn_decl.span,
-            } },
+            .fn_decl => |fn_decl| .{ .function = try lowerFunctionDecl(&hir, ast, fn_decl) },
             .struct_decl => |struct_decl| .{ .struct_decl = .{
                 .visibility = struct_decl.visibility,
                 .name = struct_decl.name,
@@ -155,7 +151,7 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
             } },
             .impl_decl => |impl_decl| .{ .impl_decl = .{
                 .visibility = impl_decl.visibility,
-                .methods_len = impl_decl.methods.len,
+                .methods = try lowerImplMethods(&hir, ast, impl_decl.methods),
                 .span = impl_decl.span,
             } },
             .interface_decl => |interface_decl| .{ .interface_decl = .{
@@ -172,6 +168,26 @@ pub fn lowerAst(allocator: Allocator, ast: *const parser.Ast) Allocator.Error!Hi
     }
 
     return hir;
+}
+
+fn lowerFunctionDecl(hir: *Hir, ast: *const parser.Ast, fn_decl: parser.FnDecl) Allocator.Error!FunctionDecl {
+    return .{
+        .visibility = fn_decl.visibility,
+        .name = fn_decl.name,
+        .params_len = fn_decl.params.len,
+        .body = try lowerBlock(hir, ast, fn_decl.body),
+        .span = fn_decl.span,
+    };
+}
+
+fn lowerImplMethods(hir: *Hir, ast: *const parser.Ast, methods: base.Range) Allocator.Error!base.Range {
+    const methods_start: u32 = @intCast(hir.impl_methods.items.len);
+    const start: usize = @intCast(methods.start);
+    const end: usize = @intCast(methods.end());
+    for (ast.impl_methods.items[start..end]) |method| {
+        try hir.impl_methods.append(hir.allocator, try lowerFunctionDecl(hir, ast, method));
+    }
+    return .{ .start = methods_start, .len = @intCast(hir.impl_methods.items.len - methods_start) };
 }
 
 fn lowerBlock(hir: *Hir, ast: *const parser.Ast, block_id: parser.ast.BlockId) Allocator.Error!BlockId {
@@ -292,7 +308,19 @@ pub fn dumpHir(allocator: Allocator, hir: *const Hir, interner: *const base.Inte
             },
             .struct_decl => |decl_info| try dumpNamed(&output.writer, interner, "Struct", decl_info),
             .enum_decl => |decl_info| try dumpNamed(&output.writer, interner, "Enum", decl_info),
-            .impl_decl => |impl_decl| try output.writer.print("  Impl {s} methods={d}\n", .{ @tagName(impl_decl.visibility), impl_decl.methods_len }),
+            .impl_decl => |impl_decl| {
+                try output.writer.print("  Impl {s} methods={d}\n", .{ @tagName(impl_decl.visibility), impl_decl.methods.len });
+                const start: usize = @intCast(impl_decl.methods.start);
+                const end: usize = @intCast(impl_decl.methods.end());
+                for (hir.impl_methods.items[start..end]) |method| {
+                    try output.writer.print("    Method {s} {s} params={d}\n", .{
+                        @tagName(method.visibility),
+                        interner.get(method.name) orelse "<missing>",
+                        method.params_len,
+                    });
+                    try dumpBlock(&output.writer, hir, interner, method.body, 3);
+                }
+            },
             .interface_decl => |decl_info| try dumpNamed(&output.writer, interner, "Interface", decl_info),
             .test_decl => |test_decl| {
                 try output.writer.writeAll("  Test\n");

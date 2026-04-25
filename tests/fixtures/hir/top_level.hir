@@ -5,6 +5,11 @@ HirRoot
   TypeAlias package UserId
   Interface package Reader
   Impl package methods=1
+    Method package display_name params=1
+      Block
+        FinalExpr
+          Field name
+            Name self
   Function package main params=0
     Block
       ExprStmt
