@@ -1,0 +1,7 @@
+fn add_one(value: Int) -> Int {
+    value + 1
+}
+
+fn main() {
+    let value = add_one();
+}

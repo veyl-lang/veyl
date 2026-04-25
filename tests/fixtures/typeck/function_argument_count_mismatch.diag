@@ -1,0 +1,5 @@
+error: function argument count mismatch
+  --> function_argument_count_mismatch.veyl:6:17
+   |
+  6 |     let value = add_one();
+   |                 ^^^^^^^^^
