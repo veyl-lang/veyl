@@ -322,6 +322,13 @@ pub const WhileStmt = struct {
     span: base.Span,
 };
 
+pub const ForStmt = struct {
+    pattern: PatternId,
+    iterable: ExprId,
+    body: BlockId,
+    span: base.Span,
+};
+
 pub const DeferKind = enum {
     always,
     err,
@@ -337,6 +344,7 @@ pub const Stmt = union(enum) {
     let_stmt: LetStmt,
     return_stmt: ReturnStmt,
     while_stmt: WhileStmt,
+    for_stmt: ForStmt,
     defer_stmt: DeferStmt,
     break_stmt: base.Span,
     continue_stmt: base.Span,
@@ -797,6 +805,17 @@ fn dumpStmt(
             try writer.writeAll("Condition\n");
             try dumpControlCondition(writer, ast, interner, while_stmt.condition, indent + 2);
             try dumpBlock(writer, ast, interner, ast.blocks.items[while_stmt.body], indent + 1);
+        },
+        .for_stmt => |for_stmt| {
+            try writeIndent(writer, indent);
+            try writer.writeAll("ForStmt\n");
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Pattern\n");
+            try dumpPattern(writer, ast, interner, for_stmt.pattern, indent + 2);
+            try writeIndent(writer, indent + 1);
+            try writer.writeAll("Iterable\n");
+            try dumpExpr(writer, ast, interner, for_stmt.iterable, indent + 2);
+            try dumpBlock(writer, ast, interner, ast.blocks.items[for_stmt.body], indent + 1);
         },
         .defer_stmt => |defer_stmt| {
             try writeIndent(writer, indent);

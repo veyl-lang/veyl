@@ -499,6 +499,10 @@ const Parser = struct {
                 const stmt = try self.parseWhileStmt();
                 try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .while_stmt = stmt }));
                 end_span = stmt.span;
+            } else if (self.peekKind() == .keyword_for) {
+                const stmt = try self.parseForStmt();
+                try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .for_stmt = stmt }));
+                end_span = stmt.span;
             } else if (self.peekKind() == .keyword_defer) {
                 const stmt = try self.parseDeferStmt();
                 try block_stmt_ids.append(self.tree.allocator, try self.tree.addStmt(.{ .defer_stmt = stmt }));
@@ -604,6 +608,25 @@ const Parser = struct {
             .condition = condition,
             .body = body,
             .span = base.Span.join(while_token.span, self.tree.blocks.items[body].span),
+        };
+    }
+
+    fn parseForStmt(self: *Parser) Allocator.Error!ast_mod.ForStmt {
+        const for_token = (try self.expect(.keyword_for, "expected for statement")) orelse return error.OutOfMemory;
+        const pattern = try self.parsePattern();
+        _ = (try self.expect(.keyword_in, "expected `in` after for pattern")) orelse return error.OutOfMemory;
+
+        const old_allow_struct_literal = self.allow_struct_literal;
+        self.allow_struct_literal = false;
+        defer self.allow_struct_literal = old_allow_struct_literal;
+        const iterable = try self.parseExpression(@intFromEnum(Precedence.lowest));
+
+        const body = try self.parseBlock();
+        return .{
+            .pattern = pattern,
+            .iterable = iterable,
+            .body = body,
+            .span = base.Span.join(for_token.span, self.tree.blocks.items[body].span),
         };
     }
 

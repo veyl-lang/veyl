@@ -1,0 +1,9 @@
+fn visit(routes: Array<Route>) {
+    for route in routes {
+        handle(route);
+    }
+
+    for Route.Asset { path } in routes {
+        print(path);
+    }
+}

@@ -1,0 +1,26 @@
+Root
+  FnDecl package visit
+    Param routes: Array<Route>
+    Return ()
+    Block
+      ForStmt
+        Pattern
+          Pattern Binding route
+        Iterable
+          Name routes
+        Block
+          ExprStmt
+            Call
+              Name handle
+              Name route
+      ForStmt
+        Pattern
+          Pattern Record Route.Asset
+            Field path
+        Iterable
+          Name routes
+        Block
+          ExprStmt
+            Call
+              Name print
+              Name path
