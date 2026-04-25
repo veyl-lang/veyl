@@ -50,6 +50,7 @@ pub const Function = struct {
     params: base.Range,
     code: base.Range,
     local_count: u32,
+    is_test: bool = false,
 };
 
 pub const StringConstant = struct {
@@ -121,6 +122,7 @@ pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const 
                     try compileFunction(&bytecode, module, source, interner, method);
                 }
             },
+            .test_decl => |test_decl| try compileTest(&bytecode, module, source, interner, test_decl),
             else => {},
         }
     }
@@ -165,6 +167,21 @@ fn compileFunction(bytecode: *BytecodeModule, module: *const hir.Hir, source: []
         .params = function.params,
         .code = .{ .start = code_start, .len = @intCast(bytecode.instructions.items.len - code_start) },
         .local_count = context.local_count,
+    });
+}
+
+fn compileTest(bytecode: *BytecodeModule, module: *const hir.Hir, source: []const u8, interner: *const base.Interner, test_decl: hir.ir.TestDecl) CompileError!void {
+    var context = CompileContext{ .bytecode = bytecode, .module = module, .source = source, .interner = interner };
+    defer context.deinit();
+
+    const code_start: u32 = @intCast(bytecode.instructions.items.len);
+    try compileBlock(&context, test_decl.body, true);
+    try bytecode.functions.append(bytecode.allocator, .{
+        .name = 0,
+        .params = .{ .start = 0, .len = 0 },
+        .code = .{ .start = code_start, .len = @intCast(bytecode.instructions.items.len - code_start) },
+        .local_count = context.local_count,
+        .is_test = true,
     });
 }
 
@@ -416,7 +433,11 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
 
     try output.writer.writeAll("BytecodeModule\n");
     for (bytecode.functions.items) |function| {
-        try output.writer.print("  Function {s} params={d}\n", .{ interner.get(function.name) orelse "<missing>", function.params.len });
+        if (function.is_test) {
+            try output.writer.writeAll("  Test\n");
+        } else {
+            try output.writer.print("  Function {s} params={d}\n", .{ interner.get(function.name) orelse "<missing>", function.params.len });
+        }
         const start: usize = @intCast(function.code.start);
         const end: usize = @intCast(function.code.end());
         for (bytecode.instructions.items[start..end], 0..) |instruction, offset| {

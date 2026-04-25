@@ -38,6 +38,16 @@ pub const Vm = struct {
         return self.runFunction(module, module.functions.items[module.entry_function], &.{});
     }
 
+    pub fn runTests(self: *Vm, module: *const bytecode.BytecodeModule) VmError!u32 {
+        var passed: u32 = 0;
+        for (module.functions.items) |function| {
+            if (!function.is_test) continue;
+            _ = try self.runFunction(module, function, &.{});
+            passed += 1;
+        }
+        return passed;
+    }
+
     fn runFunction(self: *Vm, module: *const bytecode.BytecodeModule, function: bytecode.Function, args: []const Value) VmError!Value {
         const locals = try self.allocator.alloc(Value, function.local_count);
         defer self.allocator.free(locals);
