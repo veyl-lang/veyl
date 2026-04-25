@@ -17,6 +17,9 @@ pub fn main(init: std.process.Init) !void {
     if (std.mem.eql(u8, command, "check")) {
         const path = args.next() orelse return usage(io);
         try checkFile(io, allocator, path);
+    } else if (std.mem.eql(u8, command, "fmt")) {
+        const path = args.next() orelse return usage(io);
+        try fmtFile(io, allocator, path);
     } else if (std.mem.eql(u8, command, "dump")) {
         const kind = args.next() orelse return usage(io);
         const path = args.next() orelse return usage(io);
@@ -32,6 +35,20 @@ pub fn main(init: std.process.Init) !void {
     } else {
         try usage(io);
     }
+}
+
+fn fmtFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
+    var compilation = try parseFile(io, allocator, path);
+    defer compilation.deinit();
+
+    if (compilation.diagnostics.hasErrors()) {
+        try printDiagnostics(allocator, &compilation.sources, &compilation.diagnostics);
+        std.process.exit(1);
+    }
+
+    const formatted = try veyl.fmt.formatAst(allocator, &compilation.tree.?, &compilation.interner);
+    defer allocator.free(formatted);
+    try writeStdout(io, formatted);
 }
 
 fn checkFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
@@ -153,6 +170,7 @@ fn usage(io: std.Io) !void {
     try writeStdout(io,
         \\Veyl commands:
         \\  veyl check <file>
+        \\  veyl fmt <file>
         \\  veyl dump tokens <file>
         \\  veyl dump ast <file>
         \\  veyl version
