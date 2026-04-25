@@ -82,6 +82,7 @@ pub const BytecodeModule = struct {
     allocator: Allocator,
     functions: std.ArrayListUnmanaged(Function) = .empty,
     function_names: std.AutoHashMapUnmanaged(base.SymbolId, u32) = .empty,
+    entry_function: u32 = 0,
     instructions: std.ArrayListUnmanaged(Instruction) = .empty,
     int_constants: std.ArrayListUnmanaged(i64) = .empty,
     string_constants: std.ArrayListUnmanaged(StringConstant) = .empty,
@@ -102,11 +103,11 @@ pub const BytecodeModule = struct {
 
 pub const CompileError = Allocator.Error || error{InvalidIntegerLiteral};
 
-pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const u8) CompileError!BytecodeModule {
+pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const u8, interner: *const base.Interner) CompileError!BytecodeModule {
     var bytecode = BytecodeModule.init(allocator);
     errdefer bytecode.deinit();
 
-    try predeclareFunctions(&bytecode, module);
+    try predeclareFunctions(&bytecode, module, interner);
 
     for (module.decls.items) |decl| {
         switch (decl) {
@@ -125,10 +126,14 @@ pub fn compileHir(allocator: Allocator, module: *const hir.Hir, source: []const 
     return bytecode;
 }
 
-fn predeclareFunctions(bytecode: *BytecodeModule, module: *const hir.Hir) Allocator.Error!void {
+fn predeclareFunctions(bytecode: *BytecodeModule, module: *const hir.Hir, interner: *const base.Interner) Allocator.Error!void {
     for (module.decls.items) |decl| {
         switch (decl) {
-            .function => |function| try bytecode.function_names.put(bytecode.allocator, function.name, @intCast(bytecode.function_names.count())),
+            .function => |function| {
+                const index: u32 = @intCast(bytecode.function_names.count());
+                try bytecode.function_names.put(bytecode.allocator, function.name, index);
+                if (std.mem.eql(u8, interner.get(function.name) orelse "", "main")) bytecode.entry_function = index;
+            },
             .impl_decl => |impl_decl| {
                 const start: usize = @intCast(impl_decl.methods.start);
                 const end: usize = @intCast(impl_decl.methods.end());

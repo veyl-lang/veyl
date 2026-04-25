@@ -111,7 +111,7 @@ fn runFile(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !void {
     }
 
     const source = compilation.sources.file(compilation.source_id).?.text;
-    var bytecode = try veyl.bytecode.compileHir(allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(allocator, &hir, source, &compilation.interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(allocator);
@@ -207,7 +207,7 @@ fn dumpBytecode(io: std.Io, allocator: std.mem.Allocator, path: []const u8) !voi
     defer hir.deinit();
 
     const source = compilation.sources.file(compilation.source_id).?.text;
-    var bytecode = try veyl.bytecode.compileHir(allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(allocator, &hir, source, &compilation.interner);
     defer bytecode.deinit();
 
     const dumped = try veyl.bytecode.dumpBytecode(allocator, &bytecode, &compilation.interner);

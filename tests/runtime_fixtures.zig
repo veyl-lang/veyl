@@ -21,7 +21,7 @@ test "runtime: empty main returns unit" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -51,7 +51,7 @@ test "runtime: bool main returns bool" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -81,7 +81,7 @@ test "runtime: int arithmetic returns int" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -111,7 +111,7 @@ test "runtime: local int returns int" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -141,7 +141,7 @@ test "runtime: user function call returns int" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -171,7 +171,7 @@ test "runtime: if expression returns selected branch" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -201,7 +201,7 @@ test "runtime: local assignment updates local" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -231,7 +231,7 @@ test "runtime: while loop updates local" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -261,7 +261,7 @@ test "runtime: break and continue control loop" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -291,7 +291,7 @@ test "runtime: string literal returns string" {
     var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
     defer hir.deinit();
 
-    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source);
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
     defer bytecode.deinit();
 
     var vm = veyl.runtime.Vm.init(std.testing.allocator);
@@ -299,4 +299,34 @@ test "runtime: string literal returns string" {
 
     const result = try vm.runFirst(&bytecode);
     try std.testing.expectEqualStrings("hello", result.string);
+}
+
+test "runtime: main entry can follow helpers" {
+    const source = @embedFile("fixtures/runtime/main_not_first.veyl");
+
+    var diagnostics = veyl.diag.DiagnosticBag.init(std.testing.allocator);
+    defer diagnostics.deinit();
+
+    var tokens = try veyl.lexer.lex(std.testing.allocator, 0, source, &diagnostics);
+    defer tokens.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var interner = veyl.base.Interner.init(std.testing.allocator);
+    defer interner.deinit();
+
+    var tree = try veyl.parser.parse(std.testing.allocator, 0, source, tokens.tokens.items, &interner, &diagnostics);
+    defer tree.deinit();
+    try std.testing.expect(!diagnostics.hasErrors());
+
+    var hir = try veyl.hir.lowerAst(std.testing.allocator, &tree);
+    defer hir.deinit();
+
+    var bytecode = try veyl.bytecode.compileHir(std.testing.allocator, &hir, source, &interner);
+    defer bytecode.deinit();
+
+    var vm = veyl.runtime.Vm.init(std.testing.allocator);
+    defer vm.deinit();
+
+    const result = try vm.runFirst(&bytecode);
+    try std.testing.expectEqual(veyl.runtime.Value{ .int = 42 }, result);
 }

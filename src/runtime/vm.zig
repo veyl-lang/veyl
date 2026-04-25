@@ -34,7 +34,7 @@ pub const Vm = struct {
 
     pub fn runFirst(self: *Vm, module: *const bytecode.BytecodeModule) VmError!Value {
         if (module.functions.items.len == 0) return error.EmptyModule;
-        return self.runFunction(module, module.functions.items[0], &.{});
+        return self.runFunction(module, module.functions.items[module.entry_function], &.{});
     }
 
     fn runFunction(self: *Vm, module: *const bytecode.BytecodeModule, function: bytecode.Function, args: []const Value) VmError!Value {
