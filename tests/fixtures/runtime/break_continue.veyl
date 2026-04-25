@@ -1,0 +1,11 @@
+fn main() -> Int {
+    let mut value = 0;
+    while value < 5 {
+        value = value + 1;
+        if value < 3 {
+            continue;
+        }
+        break;
+    }
+    value
+}

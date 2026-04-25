@@ -56,10 +56,13 @@ const CompileContext = struct {
     module: *const hir.Hir,
     source: []const u8,
     locals: std.AutoHashMapUnmanaged(base.SymbolId, u32) = .empty,
+    break_patches: std.ArrayListUnmanaged(u32) = .empty,
+    continue_target: ?u32 = null,
     local_count: u32 = 0,
 
     fn deinit(self: *CompileContext) void {
         self.locals.deinit(self.bytecode.allocator);
+        self.break_patches.deinit(self.bytecode.allocator);
     }
 
     fn localSlot(self: *CompileContext, name: base.SymbolId) CompileError!u32 {
@@ -198,13 +201,32 @@ fn compileStmt(context: *CompileContext, stmt: hir.ir.Stmt) CompileError!bool {
             return false;
         },
         .while_stmt => |while_stmt| {
-            const loop_start = bytecode.instructions.items.len;
+            const loop_start: u32 = @intCast(bytecode.instructions.items.len);
+            const outer_continue = context.continue_target;
+            const break_start = context.break_patches.items.len;
+            context.continue_target = loop_start;
+            defer context.continue_target = outer_continue;
+
             try compileControlCondition(context, while_stmt.condition);
             const jump_to_end = bytecode.instructions.items.len;
             try emit(bytecode, .jump_if_false, 0);
             try compileBlock(context, while_stmt.body, false);
-            try emit(bytecode, .jump, @intCast(loop_start));
+            try emit(bytecode, .jump, loop_start);
             bytecode.instructions.items[jump_to_end].operand = @intCast(bytecode.instructions.items.len);
+            for (context.break_patches.items[break_start..]) |patch| {
+                bytecode.instructions.items[patch].operand = @intCast(bytecode.instructions.items.len);
+            }
+            context.break_patches.shrinkRetainingCapacity(break_start);
+            return false;
+        },
+        .break_stmt => {
+            const patch: u32 = @intCast(bytecode.instructions.items.len);
+            try emit(bytecode, .jump, 0);
+            try context.break_patches.append(bytecode.allocator, patch);
+            return false;
+        },
+        .continue_stmt => {
+            try emit(bytecode, .jump, context.continue_target orelse 0);
             return false;
         },
         else => {
