@@ -1,0 +1,5 @@
+fn arrays() -> Int {
+    let items = [1, 2, 3];
+    let first = items[0];
+    items[first]
+}

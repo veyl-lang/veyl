@@ -389,6 +389,19 @@ const Parser = struct {
                     .args = .{ .start = args_start, .len = args_len },
                     .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
                 } });
+            } else if (self.match(.l_bracket)) |_| {
+                const index_expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
+                var end_span = self.tree.exprs.items[index_expr].span();
+                if (self.match(.r_bracket)) |bracket| {
+                    end_span = bracket.span;
+                } else {
+                    try self.addError(self.peek().span, "expected `]` after index expression");
+                }
+                expr = try self.tree.addExpr(.{ .index = .{
+                    .base = expr,
+                    .index = index_expr,
+                    .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
+                } });
             } else if (self.allow_struct_literal and self.match(.l_brace) != null) {
                 const fields_start = self.tree.reserveStructLiteralFields();
                 var fields_len: u32 = 0;
@@ -445,6 +458,7 @@ const Parser = struct {
             .keyword_true => return self.tree.addExpr(.{ .bool_literal = .{ .value = true, .span = token.span } }),
             .keyword_false => return self.tree.addExpr(.{ .bool_literal = .{ .value = false, .span = token.span } }),
             .keyword_if => return self.parseIfExpr(token.span),
+            .l_bracket => return self.parseArrayLiteral(token.span),
             .l_paren => {
                 const expr = try self.parseExpression(@intFromEnum(Precedence.lowest));
                 _ = try self.expect(.r_paren, "expected `)` after expression");
@@ -458,6 +472,31 @@ const Parser = struct {
                 } });
             },
         }
+    }
+
+    fn parseArrayLiteral(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {
+        const items_start = self.tree.reserveExprArgs();
+        var items_len: u32 = 0;
+        var end_span = start_span;
+
+        while (self.peekKind() != .r_bracket and self.peekKind() != .eof) {
+            const item = try self.parseExpression(@intFromEnum(Precedence.lowest));
+            try self.tree.addExprArg(item);
+            items_len += 1;
+            end_span = self.tree.exprs.items[item].span();
+            if (self.match(.comma) == null) break;
+        }
+
+        if (self.match(.r_bracket)) |bracket| {
+            end_span = bracket.span;
+        } else {
+            try self.addError(self.peek().span, "expected `]` after array literal");
+        }
+
+        return self.tree.addExpr(.{ .array_literal = .{
+            .items = .{ .start = items_start, .len = items_len },
+            .span = base.Span.join(start_span, end_span),
+        } });
     }
 
     fn parseIfExpr(self: *Parser, start_span: base.Span) Allocator.Error!ast_mod.ExprId {

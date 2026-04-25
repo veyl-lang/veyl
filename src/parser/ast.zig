@@ -86,6 +86,8 @@ pub const Expr = union(enum) {
     binary: struct { op: BinaryOp, left: ExprId, right: ExprId, span: base.Span },
     field: struct { base: ExprId, name: base.SymbolId, name_span: base.Span, span: base.Span },
     call: struct { callee: ExprId, args: base.Range, span: base.Span },
+    index: struct { base: ExprId, index: ExprId, span: base.Span },
+    array_literal: struct { items: base.Range, span: base.Span },
     struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
     if_expr: struct { condition: ExprId, then_block: BlockId, else_block: ?BlockId = null, span: base.Span },
 
@@ -100,6 +102,8 @@ pub const Expr = union(enum) {
             .binary => |expr| expr.span,
             .field => |expr| expr.span,
             .call => |expr| expr.span,
+            .index => |expr| expr.span,
+            .array_literal => |expr| expr.span,
             .struct_literal => |expr| expr.span,
             .if_expr => |expr| expr.span,
         };
@@ -512,6 +516,19 @@ fn dumpExpr(
             const end: usize = @intCast(call.args.end());
             for (ast.expr_args.items[start..end]) |arg| {
                 try dumpExpr(writer, ast, interner, arg, indent + 1);
+            }
+        },
+        .index => |index| {
+            try writer.writeAll("Index\n");
+            try dumpExpr(writer, ast, interner, index.base, indent + 1);
+            try dumpExpr(writer, ast, interner, index.index, indent + 1);
+        },
+        .array_literal => |array_literal| {
+            try writer.writeAll("ArrayLiteral\n");
+            const start: usize = @intCast(array_literal.items.start);
+            const end: usize = @intCast(array_literal.items.end());
+            for (ast.expr_args.items[start..end]) |item| {
+                try dumpExpr(writer, ast, interner, item, indent + 1);
             }
         },
         .struct_literal => |literal| {

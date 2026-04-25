@@ -1,0 +1,17 @@
+Root
+  FnDecl package arrays
+    Return Int
+    Block
+      LetStmt items
+        ArrayLiteral
+          IntLiteral
+          IntLiteral
+          IntLiteral
+      LetStmt first
+        Index
+          Name items
+          IntLiteral
+      FinalExpr
+        Index
+          Name items
+          Name first
