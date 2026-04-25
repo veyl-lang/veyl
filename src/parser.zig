@@ -15,6 +15,7 @@ pub const Stmt = ast.Stmt;
 pub const Expr = ast.Expr;
 pub const ExprId = ast.ExprId;
 pub const BinaryOp = ast.BinaryOp;
+pub const StructLiteralField = ast.StructLiteralField;
 pub const StructDecl = ast.StructDecl;
 pub const StructField = ast.StructField;
 pub const EnumDecl = ast.EnumDecl;

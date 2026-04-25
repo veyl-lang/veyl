@@ -337,6 +337,40 @@ const Parser = struct {
                     .args = .{ .start = args_start, .len = args_len },
                     .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
                 } });
+            } else if (self.match(.l_brace)) |_| {
+                const fields_start = self.tree.reserveStructLiteralFields();
+                var fields_len: u32 = 0;
+                var end_span = self.tree.exprs.items[expr].span();
+
+                while (self.peekKind() != .r_brace and self.peekKind() != .eof) {
+                    const field_name = (try self.expectIdentifier("expected struct literal field name")) orelse break;
+                    var value: ?ast_mod.ExprId = null;
+                    var field_end = field_name.span;
+                    if (self.match(.colon) != null) {
+                        value = try self.parseExpression(@intFromEnum(Precedence.lowest));
+                        field_end = self.tree.exprs.items[value.?].span();
+                    }
+                    try self.tree.addStructLiteralField(.{
+                        .name = try self.internToken(field_name),
+                        .name_span = field_name.span,
+                        .value = value,
+                        .span = base.Span.join(field_name.span, field_end),
+                    });
+                    fields_len += 1;
+                    end_span = field_end;
+                    if (self.match(.comma) == null) break;
+                }
+
+                if (self.match(.r_brace)) |brace| {
+                    end_span = brace.span;
+                } else {
+                    try self.addError(self.peek().span, "expected `}` after struct literal fields");
+                }
+                expr = try self.tree.addExpr(.{ .struct_literal = .{
+                    .type_expr = expr,
+                    .fields = .{ .start = fields_start, .len = fields_len },
+                    .span = base.Span.join(self.tree.exprs.items[expr].span(), end_span),
+                } });
             } else {
                 break;
             }

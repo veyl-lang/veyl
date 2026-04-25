@@ -85,6 +85,7 @@ pub const Expr = union(enum) {
     binary: struct { op: BinaryOp, left: ExprId, right: ExprId, span: base.Span },
     field: struct { base: ExprId, name: base.SymbolId, name_span: base.Span, span: base.Span },
     call: struct { callee: ExprId, args: base.Range, span: base.Span },
+    struct_literal: struct { type_expr: ExprId, fields: base.Range, span: base.Span },
 
     pub fn span(self: Expr) base.Span {
         return switch (self) {
@@ -97,8 +98,16 @@ pub const Expr = union(enum) {
             .binary => |expr| expr.span,
             .field => |expr| expr.span,
             .call => |expr| expr.span,
+            .struct_literal => |expr| expr.span,
         };
     }
+};
+
+pub const StructLiteralField = struct {
+    name: base.SymbolId,
+    name_span: base.Span,
+    value: ?ExprId = null,
+    span: base.Span,
 };
 
 pub const LetStmt = struct {
@@ -197,6 +206,7 @@ pub const Ast = struct {
     fn_params: std.ArrayListUnmanaged(FnParam) = .empty,
     exprs: std.ArrayListUnmanaged(Expr) = .empty,
     expr_args: std.ArrayListUnmanaged(ExprId) = .empty,
+    struct_literal_fields: std.ArrayListUnmanaged(StructLiteralField) = .empty,
     blocks: std.ArrayListUnmanaged(Block) = .empty,
     stmts: std.ArrayListUnmanaged(Stmt) = .empty,
     struct_fields: std.ArrayListUnmanaged(StructField) = .empty,
@@ -216,6 +226,7 @@ pub const Ast = struct {
         self.fn_params.deinit(self.allocator);
         self.exprs.deinit(self.allocator);
         self.expr_args.deinit(self.allocator);
+        self.struct_literal_fields.deinit(self.allocator);
         self.blocks.deinit(self.allocator);
         self.stmts.deinit(self.allocator);
         self.struct_fields.deinit(self.allocator);
@@ -262,6 +273,14 @@ pub const Ast = struct {
 
     pub fn addExprArg(self: *Ast, expr: ExprId) Allocator.Error!void {
         try self.expr_args.append(self.allocator, expr);
+    }
+
+    pub fn reserveStructLiteralFields(self: *const Ast) u32 {
+        return @intCast(self.struct_literal_fields.items.len);
+    }
+
+    pub fn addStructLiteralField(self: *Ast, field: StructLiteralField) Allocator.Error!void {
+        try self.struct_literal_fields.append(self.allocator, field);
     }
 
     pub fn reserveStmts(self: *const Ast) u32 {
@@ -436,6 +455,19 @@ fn dumpExpr(
             const end: usize = @intCast(call.args.end());
             for (ast.expr_args.items[start..end]) |arg| {
                 try dumpExpr(writer, ast, interner, arg, indent + 1);
+            }
+        },
+        .struct_literal => |literal| {
+            try writer.writeAll("StructLiteral\n");
+            try dumpExpr(writer, ast, interner, literal.type_expr, indent + 1);
+            const start: usize = @intCast(literal.fields.start);
+            const end: usize = @intCast(literal.fields.end());
+            for (ast.struct_literal_fields.items[start..end]) |field| {
+                try writeIndent(writer, indent + 1);
+                try writer.print("Field {s}\n", .{interner.get(field.name) orelse "<missing>"});
+                if (field.value) |value| {
+                    try dumpExpr(writer, ast, interner, value, indent + 2);
+                }
             }
         },
     }

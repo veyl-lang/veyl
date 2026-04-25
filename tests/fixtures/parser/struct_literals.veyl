@@ -1,0 +1,14 @@
+fn make_user(name: Str) -> User {
+    let age = 32;
+    User {
+        name,
+        age,
+    }
+}
+
+fn explicit_user() -> User {
+    User {
+        name: "Ada",
+        age: 32,
+    }
+}

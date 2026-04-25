@@ -1,0 +1,22 @@
+Root
+  FnDecl package make_user
+    Param name: Str
+    Return User
+    Block
+      LetStmt age
+        IntLiteral
+      FinalExpr
+        StructLiteral
+          Name User
+          Field name
+          Field age
+  FnDecl package explicit_user
+    Return User
+    Block
+      FinalExpr
+        StructLiteral
+          Name User
+          Field name
+            StringLiteral
+          Field age
+            IntLiteral
