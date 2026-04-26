@@ -19,6 +19,7 @@ pub const Op = enum {
     call,
     call_function,
     builtin_assert,
+    builtin_print,
     array_new,
     index_get,
     struct_new,
@@ -306,6 +307,15 @@ fn compileExpr(context: *CompileContext, expr_id: hir.ir.ExprId) CompileError!vo
         .call => |call| {
             switch (module.exprs.items[call.callee]) {
                 .name => |callee| {
+                    if (std.mem.eql(u8, context.interner.get(callee.symbol) orelse "", "print")) {
+                        const start: usize = @intCast(call.args.start);
+                        const end: usize = @intCast(call.args.end());
+                        for (module.expr_args.items[start..end]) |arg| {
+                            try compileExpr(context, arg);
+                        }
+                        try emit(bytecode, .builtin_print, call.args.len);
+                        return;
+                    }
                     if (std.mem.eql(u8, context.interner.get(callee.symbol) orelse "", "assert")) {
                         const start: usize = @intCast(call.args.start);
                         const end: usize = @intCast(call.args.end());
@@ -515,7 +525,7 @@ pub fn dumpBytecode(allocator: Allocator, bytecode: *const BytecodeModule, inter
             switch (instruction.op) {
                 .get_name, .get_field => try output.writer.print(" {s}", .{interner.get(instruction.operand) orelse "<missing>"}),
                 .load_local, .store_local => try output.writer.print(" {d}", .{instruction.operand}),
-                .call, .call_function, .builtin_assert, .array_new, .struct_new, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
+                .call, .call_function, .builtin_assert, .builtin_print, .array_new, .struct_new, .jump, .jump_if_false => try output.writer.print(" {d}", .{instruction.operand}),
                 .constant_int => try output.writer.print(" {d}", .{bytecode.int_constants.items[instruction.operand]}),
                 .constant_float => try output.writer.print(" {d}", .{bytecode.float_constants.items[instruction.operand]}),
                 .constant_char => try output.writer.print(" '{c}'", .{@as(u8, @intCast(bytecode.char_constants.items[instruction.operand]))}),

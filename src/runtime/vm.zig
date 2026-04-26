@@ -93,6 +93,7 @@ pub const Vm = struct {
                 .store_local => locals[instruction.operand] = try self.pop(),
                 .call_function => try self.callFunction(module, instruction.operand),
                 .builtin_assert => try self.assertBuiltin(instruction.operand),
+                .builtin_print => try self.printBuiltin(instruction.operand),
                 .array_new => try self.arrayNew(instruction.operand),
                 .index_get => try self.indexGet(),
                 .struct_new => try self.structNew(module, instruction.operand),
@@ -151,6 +152,15 @@ pub const Vm = struct {
     fn assertBuiltin(self: *Vm, arg_count: u32) VmError!void {
         if (arg_count != 1) return error.TypeMismatch;
         if (!try self.popBool()) return error.AssertionFailed;
+        try self.stack.append(self.allocator, .unit);
+    }
+
+    fn printBuiltin(self: *Vm, arg_count: u32) VmError!void {
+        var remaining = arg_count;
+        while (remaining != 0) {
+            remaining -= 1;
+            _ = try self.pop();
+        }
         try self.stack.append(self.allocator, .unit);
     }
 
