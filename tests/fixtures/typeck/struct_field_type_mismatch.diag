@@ -1,0 +1,5 @@
+error: struct field value type mismatch
+  --> struct_field_type_mismatch.veyl:6:29
+   |
+  6 |     let user = User { name: 1 };
+   |                             ^
